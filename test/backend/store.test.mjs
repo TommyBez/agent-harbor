@@ -15,7 +15,8 @@ test('schema migrations preserve existing sessions and corruption never resets p
     old.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY); CREATE TABLE requests(prompt_hash TEXT); INSERT INTO sessions VALUES('saved','Preserve this'); INSERT INTO requests VALUES('legacy-hash'); PRAGMA user_version=1;`);
     old.close();
     const migrated = new Store(filename);
-    assert.equal(migrated.get('PRAGMA user_version').user_version, 3);
+    assert.equal(migrated.get('PRAGMA user_version').user_version, 4);
+    assert.equal(migrated.get('SELECT images_json FROM requests').images_json, '[]');
     assert.equal(migrated.get('SELECT title FROM sessions').title, 'Preserve this');
     assert.equal(migrated.get('SELECT control_epoch FROM sessions').control_epoch, 0);
     assert.equal(migrated.get('SELECT payload_hash FROM requests').payload_hash, 'legacy-hash');

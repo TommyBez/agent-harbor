@@ -10,7 +10,16 @@ import { Service } from '../../broker/service.mjs';
 import { launchCommand } from '../../broker/providers.mjs';
 import { acceptEvent } from '../../broker/events.mjs';
 import { configuration } from '../../broker/common.mjs';
-import { validateCliArgs } from '../../broker/arguments.mjs';
+import { validateCliArgs, cliArgsForLaunch, usesWorktree } from '../../broker/arguments.mjs';
+
+test('legacy startup images remain readable but are never replayed on resume', () => {
+  const args = ['--model', 'example', '--image', '/old/image.png', '--worktree'];
+  const session = { provider: 'codex', cli_args: JSON.stringify(args) };
+  assert.equal(usesWorktree(session), true);
+  assert.deepEqual(cliArgsForLaunch(session), args);
+  assert.deepEqual(cliArgsForLaunch({ ...session, resuming: true }), ['--model', 'example']);
+  assert.throws(() => validateCliArgs('codex', args), { code: 'RESERVED_CLI_ARGUMENT' });
+});
 
 test('startup options persist literally and resume preserves them without recreating a worktree', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'harbor-args-'));

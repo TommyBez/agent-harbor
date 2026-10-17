@@ -72,6 +72,18 @@ Use `--provider claude` for a Claude Code session. Inspect `ok`, the request sta
 
 Creation also accepts supported original CLI startup options as `--cli-args '["--model","MODEL_NAME"]'` or repeated `--cli-arg` values. Arguments are stored with the session and validated; options that replace Harbor's conversation identity or disable normal trust checks are reserved. See the [startup option boundary](docs/CLI-PARITY.md#startup-options).
 
+### Images from Grok Bot
+
+The bot can pass local images with repeated `--image /absolute/image.png` options on `create`, `start`, `send` and `resume`. For example:
+
+```sh
+node bin/harbor.mjs send SESSION_ID --actor grok \
+  --request-id visual-review-001 \
+  --text "Describe this screenshot." --image /absolute/screenshot.png
+```
+
+Image requests use the original CLI's image input and preserve the current conversation. They do not depend on the Mac clipboard or on human keyboard input. Request JSON supports an `images` array, and the result receipt includes image metadata. See [limits, retries and the bot instructions](docs/GROK-BOT.md#images-from-the-bot).
+
 ## How it works
 
 ```text

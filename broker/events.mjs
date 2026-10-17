@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { usesWorktree, sameRepository } from './arguments.mjs';
 import { hashPrompt, now } from './common.mjs';
+import { withoutCodexImagePrefix } from './images.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'interrupted']);
 export function importEvents(store, config, run) {
@@ -60,7 +61,15 @@ export function acceptEvent(store, run, entry, offset) {
   if (event === 'UserPromptSubmit') {
     if (!turnId) { incident(store, run, 'HOOK_TURN_ID_MISSING'); return; }
     const hash = typeof e.prompt === 'string' ? hashPrompt(e.prompt) : null;
-    const request = hash ? store.get("SELECT * FROM requests WHERE run_id = ? AND prompt_hash = ? AND accepted_at IS NULL AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at LIMIT 1", run.id, hash) : null;
+    let request = hash ? store.get("SELECT * FROM requests WHERE run_id = ? AND prompt_hash = ? AND accepted_at IS NULL AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at LIMIT 1", run.id, hash) : null;
+    if (!request && hash && session.provider === 'codex') {
+      const pending = store.all("SELECT * FROM requests WHERE run_id = ? AND accepted_at IS NULL AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at", run.id);
+      request = pending.find(candidate => {
+        const count = JSON.parse(candidate.images_json || '[]').length;
+        const text = count ? withoutCodexImagePrefix(e.prompt, count) : null;
+        return text !== null && hashPrompt(text) === candidate.prompt_hash;
+      });
+    }
     if (request) store.run('UPDATE requests SET status = ?, accepted_at = ?, native_turn_id = ? WHERE session_id = ? AND request_id = ?', 'running', time, turnId, session.id, request.request_id);
     store.run('UPDATE sessions SET pending = 1, active_turn = ?, status = ?, error = NULL WHERE id = ?', turnId, 'running', session.id);
   } else if (['PermissionRequest', 'Notification'].includes(event)) {

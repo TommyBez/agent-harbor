@@ -25,3 +25,15 @@ Normal trust, authentication, hook review, and tool-permission prompts may pause
 Optional `--checkpoint PRIVATE_PATH` and `--report PATH` select alternative outputs. Both must remain outside the fixture. A new checkpoint creates new sessions; it does not reuse another run's sessions.
 
 The scenario covers CLI exit/resume, routing, test execution, response delivery and ownership. GUI close/reopen, a real bot's chat UI, daemon restart, packaging, keyboard/clipboard behavior, and Mac reboot require separate evidence.
+
+## Image requests from a real bot
+
+Use the contract in [GROK-BOT.md](../../docs/GROK-BOT.md#images-from-the-bot) with a trusted fixture and the installed interactive providers. Check `doctor.capabilities.requestImages === 1` first. Keep all test files, request JSON and raw receipts in a private ignored directory.
+
+1. Prepare three PNG images containing different random numbers and different colored shape counts. Keep expected answers separate from prompts and bot instructions.
+2. Persist one new session UUID per provider and three stable request IDs before calling the bot. Prepare `create`, `send` and `resume` JSON files; each contains one image path. Ask for image description without tools. In the second turn also ask for the first number; after resume ask for both previous numbers without including those answers.
+3. Ask the actual Grok bot to execute each JSON through `--request-file`, wait for that exact receipt, and report its response. Between send and resume, stop the CLI and verify `alive: false`.
+4. Read back all six receipts: accepted, completed, correct image manifest, correct visual answers and correct recall. Verify the native conversation ID is unchanged, the resumed run has a different PID and the old process is gone. Inspect native histories for real image content and observer events for absence of tool calls in the image turns.
+5. Confirm the answers in the actual Grok chat and in the selected desktop terminals. Record these separately from scripted RPC tests. Stop on attention or uncertain delivery and preserve the existing request; never replay it with a new ID.
+
+Also exercise two images in one `send` on each provider. This covers the live Codex attachment path as well as Claude file mentions. JPEG/WebP and other clipboard formats need their own live evidence; a successful PNG test does not certify them.

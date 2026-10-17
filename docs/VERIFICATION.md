@@ -122,6 +122,30 @@ Codex displayed observer-hook exit-code-127 warnings during its turn. Its visual
 
 This proves one copied PNG through this route. It does not certify file-copy paste from Finder, screenshots from every clipboard source, multiple images, drag/drop, an external terminal or image delivery initiated by Grok.
 
+## Images from Grok Bot: passed
+
+A subsequent implementation adds per-request image attachments to the machine API. The [sanitized image report](evidence/bot-images-2026-10-17.json) separates real Grok chat, original-CLI, native-history and desktop observations. The [reproduction procedure](../test/live/README.md#image-requests-from-a-real-bot) describes the required checks.
+
+The actual **Codex Lab** bot executed `create → send → stop → resume` once for a new conversation of each provider, using six private request JSON files. Each turn carried a different synthetic PNG with an unpredictable number, a color and a square count. Neither the image answers nor previous numbers were supplied in the prompts. Grok's final message at **20:50:25 Europe/Rome** displayed all six completed responses and the verified lifecycle results.
+
+| Check | Codex | Claude Code |
+|---|---|---|
+| Image on new conversation | Passed | Passed |
+| New image in the same open conversation | Passed | Passed |
+| New image after actual CLI exit and exact resume | Passed | Passed |
+| Previous image numbers recalled after resume | Passed | Passed |
+| Native image blocks, one per turn | 3/3 confirmed | 3/3 confirmed |
+| Correlated accepted/completed response returned to Grok | 3/3 | 3/3 |
+| Tool calls in these image turns | 0 | 0 |
+
+Readback of receipts and native histories confirmed the image content, matching answers, unchanged native conversation IDs and different resumed process IDs. Both old processes were gone. Each receipt retained its one-image manifest. These checks supplement Grok's own report rather than relying on the report alone.
+
+Separate operator-initiated controller tests passed **two images together** for Claude send, Codex resume and Codex live send. Native histories contained two image blocks for each tested turn, and all visual answers were correct. Those multiple-image tests were not initiated from the Grok chat.
+
+The packaged desktop displayed both bot-created conversations and their final image answers, including recall. Replacing the controller and closing/reopening the GUI preserved all **six** active CLI processes and native IDs. The final source checks passed **37/37 backend tests**, **15/15 native model tests**, syntax/markup validation, native build and package signature verification.
+
+Image delivery uses local files and no shared clipboard. This test starts with files already on disk; downloading a remote image or extracting an uploaded image from another app is a separate upstream operation. Live verification covers PNG, including multiple files and paths with spaces. JPEG/WebP are accepted formats but were not live-tested here. The manual image-paste shortcut limitations in the preceding checkpoint remain unchanged.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.

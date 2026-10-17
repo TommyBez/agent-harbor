@@ -32,6 +32,19 @@ test('RPC times out if a local peer accepts a request but never returns a respon
   } finally { await close(); }
 });
 
+test('an old controller cannot silently discard requested images', async t => {
+  const config = configuration({ HARBOR_HOME: homeFor(t) });
+  const actions = [];
+  const close = await stubServer(config, socket => socket.once('data', data => {
+    const request = JSON.parse(data.toString()); actions.push(request.action);
+    socket.end(JSON.stringify({ id: request.id, ok: true, schemaVersion: 3 }) + '\n');
+  }));
+  try {
+    await assert.rejects(rpc('send', { id:'session',text:'look',images:['/image.png'],requestId:'visual' }, {config,autoStart:false}), {code:'DAEMON_UPGRADE_REQUIRED'});
+    assert.deepEqual(actions,['doctor'], 'No mutation may reach the old controller.');
+  } finally {await close();}
+});
+
 test('a watch startup deadline does not disconnect a healthy quiet subscription', { timeout: 2000 }, async t => {
   const config = configuration({ HARBOR_HOME: homeFor(t) });
   const close = await stubServer(config, socket => {

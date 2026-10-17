@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-17",
+  "scenario": "Per-request image delivery from real Grok Bot to original interactive CLIs",
+  "status": "passed",
+  "versions": {
+    "nativeSdk": "0.6.2",
+    "codex": "0.162.1",
+    "claudeCode": "2.1.302"
+  },
+  "realBot": {
+    "chat": "Codex Lab",
+    "resultVisibleAt": "2026-10-17T20:50:25+02:00",
+    "createSendStopResume": true,
+    "responsesReturnedToBot": 6,
+    "clipboardUsedForImageDelivery": false
+  },
+  "providers": [
+    {
+      "provider": "claude",
+      "requestsCompleted": 3,
+      "imagesPerRequest": [
+        1,
+        1,
+        1
+      ],
+      "nativeImageBlocksPerTurn": [
+        1,
+        1,
+        1
+      ],
+      "visualAnswersCorrect": true,
+      "recallAfterResumeCorrect": true,
+      "sameNativeConversation": true,
+      "oldProcessGone": true,
+      "newProcessOnResume": true,
+      "providerToolCalls": 0,
+      "finalSessionAlive": true
+    },
+    {
+      "provider": "codex",
+      "requestsCompleted": 3,
+      "imagesPerRequest": [
+        1,
+        1,
+        1
+      ],
+      "nativeImageBlocksPerTurn": [
+        1,
+        1,
+        1
+      ],
+      "visualAnswersCorrect": true,
+      "recallAfterResumeCorrect": true,
+      "sameNativeConversation": true,
+      "oldProcessGone": true,
+      "newProcessOnResume": true,
+      "providerToolCalls": 0,
+      "finalSessionAlive": true
+    }
+  ],
+  "additionalMultipleImageChecks": [
+    {
+      "provider": "claude",
+      "action": "send",
+      "imageCount": 2,
+      "nativeImageBlocks": 2,
+      "completed": true,
+      "visualAnswersCorrect": true
+    },
+    {
+      "provider": "codex",
+      "action": "resume",
+      "imageCount": 2,
+      "nativeImageBlocks": 2,
+      "completed": true,
+      "visualAnswersCorrect": true
+    },
+    {
+      "provider": "codex",
+      "action": "send",
+      "imageCount": 2,
+      "nativeImageBlocks": 2,
+      "completed": true,
+      "visualAnswersCorrect": true
+    }
+  ],
+  "desktop": {
+    "bothBotConversationsDisplayed": true,
+    "resumedResponsesAndRecallDisplayed": true,
+    "sixCliProcessesSurvivedAppAndControllerReplacement": true
+  },
+  "automatedChecks": {
+    "backendPassed": 37,
+    "backendSkipped": 0,
+    "nativeModelPassed": 15,
+    "syntaxAndMarkup": "passed",
+    "nativeBuild": "passed",
+    "packageVerification": "passed"
+  },
+  "boundaries": [
+    "Live image tests used synthetic PNGs; JPEG and WebP are accepted but not live-certified.",
+    "Multiple-image checks were invoked through the controller by the test operator, separately from the real bot chat.",
+    "Source images were already local; remote download and chat-upload extraction are not part of this scenario.",
+    "No automatic attachment garbage collection is implemented.",
+    "This does not change the earlier manual clipboard-shortcut limitations.",
+    "Normal provider configuration, permissions and trust remain in force."
+  ]
+}

@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { now, fail, hashPrompt, hashPayload, validateText, validateActor, executable, CLI } from './common.mjs';
+import { now, fail, hashPrompt, validateText, validateActor, executable, CLI } from './common.mjs';
 import { importEvents } from './events.mjs';
 import { validateCliArgs } from './arguments.mjs';
 import { launchCommand } from './providers.mjs';
+import { readImages, stageImages, imagePrompt, imagePayloadHash } from './images.mjs';
 
 const FINISHED = new Set(['completed', 'failed', 'interrupted']);
 const BOOTSTRAP = 'Initialize this interactive session. Reply only READY. Do not use tools or modify files.';
@@ -63,10 +64,11 @@ export class Service {
     if (!r && requestId) fail('REQUEST_NOT_FOUND', 'Request not found.');
     return r ? { requestId: r.request_id, sessionId: r.session_id, runId: r.run_id, status: r.status, actor: r.actor,
       accepted: !!r.accepted_at, nativeTurnId: r.native_turn_id, response: r.response, error: r.error,
-      createdAt: r.created_at, acceptedAt: r.accepted_at, completedAt: r.completed_at, transport: r.transport } : null;
+      createdAt: r.created_at, acceptedAt: r.accepted_at, completedAt: r.completed_at, transport: r.transport, images: JSON.parse(r.images_json || '[]') } : null;
   }
   response(id, requestId, extra = {}) { return { ok: true, session: this.describe(id), ...(requestId ? { request: this.request(id, requestId) } : {}), ...extra }; }
   async execute(action, args = {}) {
+    if (args.images !== undefined && !['create','start','resume','send'].includes(action)) fail('INVALID_IMAGES', 'Images are supported by create, start, resume and send only.');
     if (['watch', 'list', 'result', 'capture', 'doctor', 'attach-info', 'wait', 'events'].includes(action)) return this.read(action, args);
     if (action === 'control') return this.mutate(action, args);
     const key = args.id || 'create';
@@ -81,7 +83,7 @@ export class Service {
     if (action === 'doctor') {
       const dependencies = {};
       for (const name of ['tmux', 'codex', 'claude']) { try { dependencies[name] = { available: true, path: executable(name, this.config) }; } catch (error) { dependencies[name] = { available: false, error: error.message }; } }
-      return { ok: true, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 3, dependencies };
+      return { ok: true, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 4, capabilities: { requestImages: 1 }, dependencies };
     }
     const session = this.describe(args.id);
     if (action === 'events') {
@@ -117,15 +119,15 @@ export class Service {
     fail('UNKNOWN_COMMAND', 'Unknown command.');
   }
   authorize(session, actor) { validateActor(actor); if (session.owner !== actor) fail('CONTROL_DENIED', `The session is controlled by ${session.owner}.`); if (session.archived_at) fail('SESSION_ARCHIVED', 'Archived sessions cannot be started or changed.'); }
-  duplicate(session, requestId, text) {
+  duplicate(session, requestId, payloadHash) {
     const existing = this.store.request(session.id, requestId);
     if (!existing) return false;
-    if (existing.payload_hash !== hashPayload(text)) fail('REQUEST_ID_CONFLICT', 'This request ID was already used with different text.');
+    if (existing.payload_hash !== payloadHash) fail('REQUEST_ID_CONFLICT', 'This request ID was already used with different text or images.');
     return true;
   }
-  newRequest(session, run, requestId, text, actor, transport) {
+  newRequest(session, run, requestId, prompt, actor, transport, payloadHash, images = []) {
     if (!requestId || typeof requestId !== 'string' || requestId.length > 200 || /[\x00-\x1f]/.test(requestId)) fail('INVALID_REQUEST_ID', 'Request ID must contain 1–200 printable characters.');
-    this.store.run('INSERT INTO requests(session_id,request_id,run_id,prompt_hash,payload_hash,status,actor,created_at,transport) VALUES(?,?,?,?,?,?,?,?,?)', session.id, requestId, run.id, hashPrompt(text), hashPayload(text), 'intent', actor, now(), transport);
+    this.store.run('INSERT INTO requests(session_id,request_id,run_id,prompt_hash,payload_hash,status,actor,created_at,transport,images_json) VALUES(?,?,?,?,?,?,?,?,?,?)', session.id, requestId, run.id, hashPrompt(prompt), payloadHash, 'intent', actor, now(), transport, JSON.stringify(images));
   }
   async mutate(action, args) {
     this.refresh();
@@ -159,19 +161,28 @@ export class Service {
     this.authorize(s, actor);
     if (action === 'start' || action === 'resume') return this.start(s, { ...args, action }, actor);
     if (action === 'send') {
-      const text = validateText(args.text);
+      const inputImages = readImages(args.images);
+      const text = validateText(args.text ?? (inputImages.length ? 'Describe the attached images.' : undefined));
+      const payloadHash = imagePayloadHash(text, inputImages);
       const requestId = args.requestId || randomUUID();
-      if (this.duplicate(s, requestId, text)) return this.response(s.id, requestId, { duplicate: true });
+      if (this.duplicate(s, requestId, payloadHash)) return this.response(s.id, requestId, { duplicate: true });
       this.canSend(s);
       const run = this.store.runRecord(s.run_id);
-      this.store.transaction(() => { this.newRequest(s, run, requestId, text, actor, 'terminal-paste'); this.store.run("UPDATE sessions SET pending = 1, status = 'running', updated_at = ? WHERE id = ?", now(), s.id); this.store.audit('send_intent', s.id, { requestId, runId: run.id }); });
+      const images = stageImages(this.config, inputImages);
+      const prompt = imagePrompt(s.provider, text, images);
+      this.store.transaction(() => { this.newRequest(s, run, requestId, prompt, actor, images.length ? 'terminal-images' : 'terminal-paste', payloadHash, images); this.store.run("UPDATE sessions SET pending = 1, status = 'running', updated_at = ? WHERE id = ?", now(), s.id); this.store.audit('send_intent', s.id, { requestId, runId: run.id }); });
       try {
         this.store.run("UPDATE requests SET status = 'delivering' WHERE session_id = ? AND request_id = ?", s.id, requestId);
-        this.tmux.paste(run, text);
+        const checkControl = () => {
+          const current = this.store.session(s.id);
+          this.authorize(current, actor);
+          if (current.control_epoch !== s.control_epoch) fail('CONTROL_CHANGED', 'Control changed while typing. Review the unsubmitted terminal draft.');
+        };
+        if (s.provider === 'codex' && images.length) await this.tmux.pasteImages(run, images, checkControl);
+        checkControl();
+        this.tmux.paste(run, prompt);
         await delay(400);
-        const current = this.store.session(s.id);
-        this.authorize(current, actor);
-        if (current.control_epoch !== s.control_epoch) fail('CONTROL_CHANGED', 'Control changed while typing. Review the unsubmitted terminal draft.');
+        checkControl();
         this.tmux.enter(run);
         this.store.run("UPDATE requests SET status = 'awaiting_ack', delivered_at = ? WHERE session_id = ? AND request_id = ? AND status = 'delivering'", now(), s.id, requestId);
       } catch (error) { this.uncertain(s.id, requestId, error); throw error; }
@@ -184,6 +195,8 @@ export class Service {
   async create(args) {
     if (!['codex', 'claude'].includes(args.provider)) fail('INVALID_PROVIDER', 'Provider must be codex or claude.');
     const owner = validateActor(args.owner || 'human');
+    const inputImages = readImages(args.images);
+    const hasTask = !!args.text || inputImages.length > 0;
     if (!args.project || !path.isAbsolute(args.project)) fail('INVALID_PROJECT', 'Provide an absolute project directory.');
     let project;
     try { project = fs.realpathSync(args.project); if (!fs.statSync(project).isDirectory()) throw new Error('Not a directory'); } catch { fail('INVALID_PROJECT', 'Project directory does not exist.'); }
@@ -194,7 +207,7 @@ export class Service {
     const existing = this.store.get('SELECT * FROM sessions WHERE id = ?', id);
     if (existing) {
       if (existing.provider !== args.provider || existing.project !== project || existing.title !== title || existing.cli_args !== JSON.stringify(cliArgs)) fail('SESSION_ID_CONFLICT', 'Session ID already identifies a different session.');
-      if (args.text) return this.start(existing, args, owner);
+      if (hasTask) return this.start(existing, args, owner, inputImages);
       return this.response(id, undefined, { duplicate: true });
     }
     if (args.text) validateText(args.text);
@@ -202,7 +215,7 @@ export class Service {
       this.store.run('INSERT INTO sessions(id,title,provider,project,cli_args,owner,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', id, title, args.provider, project, JSON.stringify(cliArgs), owner, 'stopped', now(), now());
       this.store.audit('created', id, { provider: args.provider, project, owner });
     });
-    if (args.text) return this.start(this.store.session(id), args, owner);
+    if (hasTask) return this.start(this.store.session(id), args, owner, inputImages);
     return this.response(id);
   }
   canSend(s) {
@@ -211,6 +224,7 @@ export class Service {
     if (s.closing) fail('SESSION_CLOSING', 'Wait for the CLI to exit.');
     if (s.pending) fail('TURN_PENDING', 'Wait for the active turn to finish.');
     const run = this.store.runRecord(s.run_id);
+    if (this.store.get("SELECT request_id FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') LIMIT 1", s.run_id)) fail('REQUEST_UNRESOLVED', 'A previous delivery has no confirmed receipt. Inspect that request and the existing terminal before sending another task.');
     if (run?.attention) fail('CLI_NOT_READY', 'Hook journal integrity requires attention.');
     if (!current.hooksReady || !current.nativeSessionId || s.status !== 'ready') fail('CLI_NOT_READY', 'Open the terminal to resolve trust, permissions, or hook availability.');
   }
@@ -228,23 +242,27 @@ export class Service {
       } catch (error) { this.store.audit('dead_terminal_prune_failed', id, { runId: run.id, error: error.message }); }
     }
   }
-  async start(s, args, actor) {
+  async start(s, args, actor, preparedImages) {
     this.authorize(s, actor);
-    const text = validateText(args.text || BOOTSTRAP);
+    const inputImages = preparedImages || readImages(args.images);
+    const text = validateText(args.text ?? (inputImages.length ? 'Describe the attached images.' : BOOTSTRAP));
+    const payloadHash = imagePayloadHash(text, inputImages);
     const requestId = args.requestId || randomUUID();
-    if (this.duplicate(s, requestId, text)) return this.response(s.id, requestId, { duplicate: true });
-    if (this.describe(s.id).alive) { if (args.text) fail('SESSION_ALIVE', 'Use send for an active CLI.'); return this.response(s.id); }
+    if (this.duplicate(s, requestId, payloadHash)) return this.response(s.id, requestId, { duplicate: true });
+    if (this.describe(s.id).alive) { if (args.text || inputImages.length) fail('SESSION_ALIVE', 'Use send for an active CLI.'); return this.response(s.id); }
     if (args.action === 'resume' && !s.run_id) fail('SESSION_NOT_STARTED', 'The session has never been started.');
     if (s.run_id && (!s.native_id || !this.store.runRecord(s.run_id).hooks_ready)) fail('SESSION_ID_UNVERIFIED', 'The previous process did not confirm its identity; inspect its terminal before recovery.');
     const run = { id: randomUUID(), session_id: s.id, started_at: now() };
     run.tmux_name = 'harbor-' + run.id;
     const nativeId = s.native_id || (s.provider === 'claude' ? randomUUID() : null);
     if (s.working_directory && !fs.existsSync(s.working_directory)) fail('WORKTREE_MISSING', 'The original working directory is missing. Restore it before resuming.');
-    const command = launchCommand({ ...s, native_id: nativeId, resuming: !!s.run_id }, this.config, text);
+    const images = stageImages(this.config, inputImages);
+    const prompt = imagePrompt(s.provider, text, images);
+    const command = launchCommand({ ...s, native_id: nativeId, resuming: !!s.run_id }, this.config, prompt, images);
     fs.mkdirSync(path.join(this.config.home, 'runs', run.id), { mode: 0o700 });
     this.store.transaction(() => {
       this.store.run('INSERT INTO runs(id,session_id,tmux_name,started_at) VALUES(?,?,?,?)', run.id, s.id, run.tmux_name, run.started_at);
-      this.newRequest(s, run, requestId, text, actor, 'cli-initial-prompt');
+      this.newRequest(s, run, requestId, prompt, actor, images.length ? 'cli-initial-images' : 'cli-initial-prompt', payloadHash, images);
       this.store.run("UPDATE sessions SET native_id = ?, run_id = ?, pending = 1, active_turn = NULL, status = 'starting', closing = 0, error = NULL, updated_at = ? WHERE id = ?", nativeId, run.id, run.started_at, s.id);
       this.store.audit(s.run_id ? 'resume_intent' : 'start_intent', s.id, { requestId, runId: run.id, nativeSessionId: nativeId });
     });

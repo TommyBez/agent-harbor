@@ -1,7 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { executable, fail } from './common.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { executable, fail, quote } from './common.mjs';
+
+export function codexComposerImages(screen) {
+  const lines = screen.split('\n');
+  const start = lines.findLastIndex(line => /^\s*›(?:\s|$)/.test(line));
+  if (start < 0) return null;
+  const composer = [];
+  for (const line of lines.slice(start)) {
+    if (composer.length && !line.trim()) break;
+    composer.push(line);
+  }
+  return [...composer.join('\n').matchAll(/\[Image #(\d+)\]/g)].map(match => Number(match[1]));
+}
 
 export class Tmux {
   constructor(config) { this.config = config; this.binary = executable('tmux', config); }
@@ -33,6 +46,22 @@ export class Tmux {
     this.call(['load-buffer', '-b', buffer, '-'], { input: text });
     try { this.call(['paste-buffer', '-d', '-p', '-b', buffer, '-t', run.pane_id]); }
     catch (error) { try { this.call(['delete-buffer', '-b', buffer]); } catch {} throw error; }
+  }
+  async pasteImages(run, images, checkControl) {
+    const initial = codexComposerImages(this.capture(run));
+    if (initial === null || initial.length) fail('IMAGE_COMPOSER_NOT_READY', 'Open the existing Codex terminal and inspect its draft before sending images.');
+    for (let index = 0; index < images.length; index++) {
+      checkControl();
+      this.paste(run, quote(images[index].storedPath));
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        checkControl();
+        const attached = codexComposerImages(this.capture(run));
+        if (attached?.length === index + 1 && attached.every((number, position) => number === position + 1)) break;
+        if (Date.now() >= deadline) fail('IMAGE_ATTACH_UNCONFIRMED', 'Codex did not confirm the image attachment. The draft was not submitted; inspect the terminal before retrying.');
+        await delay(100);
+      }
+    }
   }
   enter(run) { this.call(['send-keys', '-t', run.pane_id, 'Enter']); }
   exit(run) { this.call(['send-keys', '-t', run.pane_id, '-l', '/exit']); }

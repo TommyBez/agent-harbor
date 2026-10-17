@@ -58,3 +58,9 @@ The file contains a JSON object with the normal create fields: `id`, `requestId`
 ## Terminal history cleanup
 
 On resume, Harbor saves the final screen of historical runs in the private state directory at `runs/<run-id>/final-screen.txt`, then removes their tmux session only when every pane is dead. A living secondary pane prevents cleanup. The current run, native conversation history, event journal and SQLite request records are retained.
+
+## Images belong to a request
+
+Use Harbor’s repeated `--image` option or the request JSON `images` array. Do not put Codex `--image`/`-i` in persistent `--cli-args`: Harbor reserves those flags so an old image is not automatically attached on every resume. Image delivery is available for both providers at creation, start, send and resume. See [the bot image contract](GROK-BOT.md#images-from-the-bot).
+
+Existing records from older releases that contain Codex startup image flags remain readable. Their initial launch can still use those saved flags; resume omits the old images. Supply current images explicitly on the new request.

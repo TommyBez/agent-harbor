@@ -57,10 +57,16 @@ export function argumentGroups(provider, input = []) {
   }
   return groups;
 }
-export function validateCliArgs(provider, input = []) { argumentGroups(provider, input); return [...input]; }
+export function validateCliArgs(provider, input = []) {
+  const groups = argumentGroups(provider, input);
+  if (provider === 'codex' && groups.some(group => ['--image','-i'].includes(group.flag))) fail('RESERVED_CLI_ARGUMENT', 'Use Harbor --image for per-request attachments, not persistent --cli-args.');
+  return [...input];
+}
 export function cliArgsForLaunch(session) {
   const groups = argumentGroups(session.provider, JSON.parse(session.cli_args || '[]'));
-  return groups.filter(group => !session.resuming || !['--worktree','-w'].includes(group.flag)).flatMap(group => group.tokens);
+  // Read old records that used startup images, but do not replay those images
+  // on resume. New requests use the separately retained attachment manifest.
+  return groups.filter(group => !session.resuming || !['--worktree','-w', ...(session.provider === 'codex' ? ['--image','-i'] : [])].includes(group.flag)).flatMap(group => group.tokens);
 }
 export function usesWorktree(session) { return argumentGroups(session.provider, JSON.parse(session.cli_args || '[]')).some(group => ['--worktree','-w'].includes(group.flag)); }
 export function sameRepository(project, directory) {

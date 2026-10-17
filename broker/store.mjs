@@ -10,7 +10,7 @@ export class Store {
       const check = this.db.prepare('PRAGMA quick_check').get().quick_check;
       if (check !== 'ok') fail('DATABASE_CORRUPT', check);
       const version = this.db.prepare('PRAGMA user_version').get().user_version;
-      if (version > 3) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
+      if (version > 4) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
       if (version === 0) this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY, title TEXT NOT NULL, provider TEXT NOT NULL CHECK(provider IN ('codex','claude')),
@@ -28,7 +28,7 @@ export class Store {
           session_id TEXT NOT NULL REFERENCES sessions(id), request_id TEXT NOT NULL, run_id TEXT NOT NULL REFERENCES runs(id),
           prompt_hash TEXT NOT NULL, payload_hash TEXT NOT NULL, status TEXT NOT NULL, actor TEXT NOT NULL,
           created_at TEXT NOT NULL, delivered_at TEXT, accepted_at TEXT, completed_at TEXT,
-          native_turn_id TEXT, response TEXT, error TEXT, transport TEXT NOT NULL,
+          native_turn_id TEXT, response TEXT, error TEXT, transport TEXT NOT NULL, images_json TEXT NOT NULL DEFAULT '[]',
           PRIMARY KEY(session_id, request_id)
         );
         CREATE INDEX requests_run ON requests(run_id, status);
@@ -37,7 +37,7 @@ export class Store {
           UNIQUE(run_id, source_offset));
         CREATE INDEX events_run ON events(run_id, seq);
         CREATE TABLE audit (seq INTEGER PRIMARY KEY, time TEXT NOT NULL, action TEXT NOT NULL, session_id TEXT, details TEXT NOT NULL);
-        PRAGMA user_version=3; COMMIT;`);
+        PRAGMA user_version=4; COMMIT;`);
       if (version === 1) this.transaction(() => {
         const columns = table => new Set(this.all('PRAGMA table_info(' + table + ')').map(column => column.name));
         if (!columns('runs').has('pane_id')) this.db.exec('ALTER TABLE runs ADD COLUMN pane_id TEXT');
@@ -53,6 +53,10 @@ export class Store {
         if (!columns.has('cli_args')) this.db.exec("ALTER TABLE sessions ADD COLUMN cli_args TEXT NOT NULL DEFAULT '[]'");
         if (!columns.has('working_directory')) this.db.exec('ALTER TABLE sessions ADD COLUMN working_directory TEXT');
         this.db.exec('PRAGMA user_version=3');
+      });
+      if (version >= 1 && version <= 3) this.transaction(() => {
+        this.db.exec("ALTER TABLE requests ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
+        this.db.exec('PRAGMA user_version=4');
       });
       fs.chmodSync(filename, 0o600);
     } catch (error) { this.db?.close(); if (error.code?.startsWith('SQLITE') || !error.code) fail('DATABASE_UNAVAILABLE', `State database could not be opened; it was not reset: ${error.message}`); throw error; }

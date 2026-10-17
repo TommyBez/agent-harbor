@@ -68,12 +68,13 @@ Default state is outside the checkout:
   tmux.sock
   config.json
   logs/
+  attachments/<sha256>.<extension>
   runs/<run-id>/events.jsonl
 ```
 
 `HARBOR_HOME` can select an isolated state directory for tests or a separate installation. It must be a real directory owned by the current OS user; permissions are restricted to that user. The directory and socket location must satisfy the Unix socket path-length limit. SQLite and socket files receive restrictive permissions.
 
-The current schema is **version 3**. It separates sessions, process runs, requests, imported events and lifecycle audit records. Session records include supported startup arguments and the observed working directory. Runs pin their primary tmux pane. Explicit migrations upgrade version 1 through version 2 to version 3; an unknown newer schema or corrupt database is an error, not permission to delete and recreate user state. SQLite WAL supports durable transactions and integrity checks.
+The current schema is **version 4**. It separates sessions, process runs, requests, imported events and lifecycle audit records. Session records include supported startup arguments and the observed working directory. Runs pin their primary tmux pane. Explicit migrations upgrade version 1 through versions 2 and 3 to version 4; an unknown newer schema or corrupt database is an error, not permission to delete and recreate user state. SQLite WAL supports durable transactions and integrity checks.
 
 The version-1 migration cannot reconstruct original request text that was never stored: legacy request hashes retain their old normalized representation. New requests store both an original-payload hash and a separate correlation hash. Retrying a legacy request with formatting differences may return a conflict; it must not replay the prompt to resolve that conflict.
 
@@ -105,6 +106,14 @@ Request identity must compare the original payload. Any normalization used to co
 Exactly-once terminal delivery cannot be guaranteed across an arbitrary crash between writing bytes and recording acknowledgement. Such a request is uncertain. Recovery reconciles the journal and process state; it does **not** replay uncertain input automatically. The caller can inspect the request and terminal, then decide how to proceed. A timeout does not mean the prompt was never delivered.
 
 Observed `UserPromptSubmit` means the prompt reached the hook boundary. Another hook or a provider policy may still reject it. A process being alive is not evidence that its composer is ready. Human attention, interrupted turns and missing observations must remain distinguishable from success.
+
+### Per-request images
+
+Requests carry an optional ordered list of local image paths. Before intent/delivery, the controller captures bounded regular files without following final-component symlinks, detects supported headers and creates private content-addressed copies. Each request stores an `images_json` manifest. Its payload hash combines exact text, source paths, image hashes and ordering; text-only hashes keep their previous representation. A version-4 migration adds empty manifests to old receipts without changing their identity.
+
+Native image delivery is provider-specific: Codex initial/resume flags, separately pasted paths in the active Codex composer, and Claude quoted file mentions. Staged paths never become shell source. Live Codex delivery checks attachment markers in the current composer before entering text, then fences ownership again before Enter. The observer matches Codex's image-number prefix only against a pending request whose manifest has that exact image count. It does not strip markers indiscriminately from ordinary text-only requests.
+
+The private copies remain outside the repository and are retained with history; no automatic garbage collection is implemented yet. The host OS clipboard is never used. Clients probe `capabilities.requestImages` to reject an older daemon that would otherwise ignore unknown image fields. Native hook acknowledgements and completion remain authoritative; attachment markers only confirm composer preparation. Provider settings and native image-decoding errors remain visible.
 
 ## Ownership and terminal clients
 

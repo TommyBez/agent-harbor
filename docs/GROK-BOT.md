@@ -55,6 +55,8 @@ Before creating a session, generate and retain a UUID for --id. Retain its provi
 
 For every task, generate and retain a request ID before sending it. Reuse that exact request ID and payload only for a retry of the same task. A different task gets a different request ID. Retain the returned Harbor session ID and native conversation ID in your task state.
 
+To send images, supply repeated --image /absolute/file.png options on create, start, resume or send, or use images: [absolute paths] in a private --request-file JSON. Supply actual local PNG, JPEG or WebP files, not URLs, clipboard shortcuts or a description of the pixels. Keep source files stable until the request is accepted; use result to retrieve an existing receipt if the original files have gone away. The controller snapshots each image and includes its hash in request identity. Inspect request.images as well as request.response. Never resend an uncertain request with a new ID.
+
 Use wait or result with both the Harbor session ID and request ID. Treat request.response as the answer only when the requested operation is completed. A process being alive, a terminal screenshot or an old lastResponse is not proof that this request succeeded. Report the provider's answer to the user with any relevant limitations.
 
 Use send --actor grok for an already running, ready session. Use stop --actor grok only after the active turn finishes. Use resume --actor grok for the same saved conversation after its CLI exits. Resume must keep the same Harbor session ID; do not substitute create or a provider's latest conversation.
@@ -89,6 +91,38 @@ REQUEST_ID="initial-analysis-001"
 
 Do not execute the whole lifecycle blindly. Inspect each result before the next mutation. After completion, a later task in the active process uses `send` with a new request ID. After a verified normal stop, use `resume` with a new request ID and the same session ID. The provider value `codex` uses the same Harbor contract.
 
+## Images from the bot
+
+Images are request data, separate from persistent CLI startup options. The same interface works for both providers and for `create`, `start`, `send` and `resume`:
+
+```sh
+"$HARBOR_NODE" "$HARBOR_CLI" send "$SESSION_ID" \
+  --actor grok --request-id visual-review-001 \
+  --text "Compare these two screenshots and identify the changes." \
+  --image "/absolute/path/before.png" \
+  --image "/absolute/path/after.png"
+```
+
+For long prompts or paths that need escaping, write a private JSON file and invoke `send --request-file /absolute/request.json`. Request files also support `create`, `start` and `resume`; their `id` is included in the JSON rather than supplied as another argument:
+
+```json
+{
+  "id": "40f3177c-95c2-47e6-a960-6833667fd203",
+  "actor": "grok",
+  "requestId": "visual-review-001",
+  "text": "Describe the attached screenshot.",
+  "images": ["/absolute/path/screenshot.png"]
+}
+```
+
+Harbor accepts up to **8 images**, **10 MiB per file** and **32 MiB total**, with PNG, JPEG or WebP headers. Files must be regular, absolute local paths; symbolic links, directories, URLs, control characters and unsupported formats are rejected. The provider still performs full decoding and can impose its own limits. Image-only requests use a short description prompt by default. Live validation currently covers PNG; JPEG and WebP are accepted formats, not yet live-certified cases.
+
+The controller copies the captured bytes into private, content-addressed storage under its state directory. Copies stay available for retries and native conversation history; there is no automatic attachment garbage collection in this release. Hashes and file metadata appear in `request.images`, never image base64 in ordinary JSON responses. Reusing a request ID with changed text, file bytes, path or image order is a conflict. Preserve the original source files when retrying a mutation; retrieving `result` does not need them.
+
+Codex launch/resume uses its native `--image` flags. In an already-open Codex session, Harbor pastes each staged path separately, checks the current composer for the attachment marker, then submits the text. Claude uses its native quoted `@file` mentions, which load image content before inference. These routes preserve the original interactive CLI and use **no shared system clipboard or desktop keyboard shortcuts**. Provider settings that disable file mentions can affect Claude; normal provider settings and permissions remain in force.
+
+An older controller is rejected with `DAEMON_UPGRADE_REQUIRED` before a client sends an image mutation. Attachment or control failures after delivery preparation leave an uncertain receipt and an unsubmitted draft to inspect; Harbor does not silently send text alone or replay the task. The composer check is an input preflight only: completion and response attribution still require the native hooks.
+
 ## Results, errors and retries
 
 | Result or error | Meaning | Bot response |
@@ -99,16 +133,22 @@ Do not execute the whole lifecycle blindly. Inspect each result before the next 
 | `uncertain`, `DELIVERY_UNCERTAIN`, `RPC_TIMEOUT`, disconnection | Delivery may have occurred | Retrieve the same receipt; do not blindly replay |
 | `CONTROL_DENIED` or `CONTROL_CHANGED` | Human ownership or a changed control epoch | Stop writing and let the human resolve ownership/draft |
 | `TURN_PENDING`, `SESSION_CLOSING` | Current interaction has not reached a ready boundary | Wait or inspect the same operation |
+| `REQUEST_UNRESOLVED` | A previous delivery in this process still has no confirmed receipt | Inspect that receipt and terminal; a new task is blocked to prevent ambiguous attribution |
 | `CLI_NOT_READY`, attention state, `HOOKS_NOT_READY` | Trust, hooks, permission or other observed readiness problem | Direct the user to the existing terminal |
 | `REQUEST_ID_CONFLICT`, `SESSION_ID_CONFLICT` | A retained identity was reused for different input | Correct bookkeeping; do not create duplicates to hide the error |
 | `SESSION_ID_UNVERIFIED`, `WORKTREE_MISSING` | Exact recovery cannot safely proceed | Preserve the session and request human repair |
 | `STOP_TIMEOUT` | Normal exit was not confirmed; Harbor did not force-kill | Inspect the terminal; never report the CLI as closed |
+| `INVALID_IMAGES`, `INVALID_IMAGE`, `IMAGE_UNREADABLE`, `IMAGES_TOO_LARGE` | Image input is invalid or unavailable | Correct the file input before a new operation |
+| `DAEMON_UPGRADE_REQUIRED` | Active controller cannot handle images | Upgrade the controller before sending; the client did not submit the image mutation |
+| `IMAGE_COMPOSER_NOT_READY`, `IMAGE_ATTACH_UNCONFIRMED` | Image attachment could not be confirmed | Inspect the existing draft and receipt; never submit or replay blindly |
 | `UNSUPPORTED_CLI_ARGUMENT`, `RESERVED_CLI_ARGUMENT` | Startup option is unsupported or conflicts with Harbor's contract | Explain the boundary; do not bypass the validator |
 
 `wait` exits with code 0 for completion, 3 for timeout and 2 for other non-completed outcomes. Other command failures use a nonzero exit and an error object. Inspect the JSON even when the shell returns a nonzero status. `watch` is a long-running subscription, not a task completion command.
 
-Normal creation with no `--text` records a stopped session; call `start` to launch it. The desktop can also create, select, take over, stop, resume and restore sessions. The machine API's control commands are local coordination, not authentication against other processes running as the same OS user.
+Normal creation with no `--text` and no images records a stopped session; call `start` to launch it. An image-only creation starts with a neutral description prompt. The desktop can also create, select, take over, stop, resume and restore sessions. The machine API's control commands are local coordination, not authentication against other processes running as the same OS user.
 
 ## Verification boundary
 
 The copyable instruction and commands describe the integration contract. The [2026-10-17 verification record](VERIFICATION.md) also records an observed real Grok Bot run: the Codex Lab bot displayed the successful result for two Claude and two Codex conversations after analysis, actual CLI exit and exact-conversation resume. This proves the tested local bot configuration and scenario; it does not automatically verify another installation. Local scripted tests, native UI tests and the real Grok chat remain separate evidence layers.
+
+The image checkpoint additionally confirms the actual bot created, sent images to, stopped and resumed one conversation per provider, with six accepted/completed responses returned to its chat. Native histories contained the image blocks, and both providers recalled prior image numbers after resume. See [image verification](VERIFICATION.md#images-from-grok-bot-passed).

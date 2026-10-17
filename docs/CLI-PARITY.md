@@ -55,6 +55,7 @@ Status refers to the [2026-10-17 verification checkpoint](VERIFICATION.md). A li
 | Unicode and emoji | Renderer and terminal encoding | Correct content and cursor placement | Accented text and emoji content passed on both providers; general cursor/Unicode edge cases pending |
 | IME composition | Embedded terminal or external terminal fallback | Composition commits correctly without duplicate input | Pending |
 | Image clipboard | Provider + terminal/OS integration | Image reaches the original conversation and model reads its unseen contents | Partial live pass: **Ctrl+Shift+V** attached a copied PNG in both CLIs; both described it correctly without tools. Cmd+V and Ctrl+V attached nothing in Native SDK 0.6.2. See [image-paste evidence](VERIFICATION.md#image-clipboard-partial-live-pass) |
+| Bot image requests | Per-request `--image` or JSON `images` | Native image content, attributed response, no shared clipboard; same conversation after resume | Real Grok create/send/stop/resume passed on both providers, including visual recall; separate multiple-PNG controller checks passed |
 | Image drag/drop | Provider + terminal/OS integration | Dropped image reaches the intended conversation | Pending |
 | Resize and alternate screen | Selected terminal attachment | Repeated resize, menus and redraw remain usable | Pending |
 | Selection and scrollback | Native terminal surface | Copy, scrolling and returning to live output work | Pending |

@@ -7,6 +7,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { ROOT, configuration, ensurePrivateHome, HarborError, fail } from './common.mjs';
 
 export async function rpc(action, args = {}, { config = configuration(), onEvent, autoStart = true, timeoutMs } = {}) {
+  if (Array.isArray(args.images) && args.images.length && ['create','start','resume','send'].includes(action)) {
+    const doctor = await rpc('doctor', {}, { config, autoStart, timeoutMs });
+    if (doctor.capabilities?.requestImages !== 1) fail('DAEMON_UPGRADE_REQUIRED', 'The running controller does not support image requests. Upgrade/restart it before sending; no request was delivered.');
+  }
   let attempts = 0;
   for (;;) {
     try { return await exchange(config, action, args, onEvent, timeoutMs); }

@@ -1,6 +1,6 @@
 # Verification record
 
-Date: **2026-10-17**. This is the first-release verification checkpoint. It separates real provider behavior, automated component tests, native UI observations and unverified capabilities. The real Grok Bot response, packaged-app observations and isolated desktop smoke test below have been confirmed. External Terminal interaction and publication remain separate checks.
+Date: **2026-10-17**. This is the first-release verification checkpoint. It separates real provider behavior, automated component tests, native UI observations and unverified capabilities. The real Grok Bot response, packaged-app observations and isolated desktop smoke test below have been confirmed. The source is published at [TommyBez/agent-harbor](https://github.com/TommyBez/agent-harbor); repository visibility and the uploaded source commit were read back after publication. External Terminal interaction remains a separate boundary.
 
 ## Four real interactive CLI sessions: passed
 
@@ -31,7 +31,7 @@ The local runner proves the controller and original-CLI lifecycle. The real-bot 
 
 ## Automated checks at this checkpoint
 
-The final local checks recorded **30/30 backend tests** with zero skips and **15/15 native model tests** passing. Source/markup checks, the final rebuild containing the parser fix and packaging checks also passed. These are local results; public repository CI is still pending.
+The final local checks recorded **30/30 backend tests** with zero skips and **15/15 native model tests** passing. Source/markup checks, the final rebuild containing the parser fix and packaging checks also passed. These are local results. [GitHub Actions](https://github.com/TommyBez/agent-harbor/actions/workflows/ci.yml) separately runs the backend on Linux and macOS, plus native UI tests, checks, build and packaging on macOS; consult the run for the exact commit's remote result.
 
 Backend coverage includes request identity, event attribution, control boundaries, startup-argument validation, persistence and fake-process lifecycle cases. Native model tests exercise the application state and list behavior; they do not substitute for operating the actual window.
 
@@ -103,6 +103,6 @@ This audit does not certify every user hook, managed policy or event. Representa
 - Every CLI startup flag, model, plugin, skill, MCP integration or provider update.
 - Real provider worktree onboarding and all advanced option combinations.
 - Sustained performance with large numbers of simultaneously active AI agents.
-- External Terminal interaction beyond attachment, UI cases outside the recorded scenarios, final release CI and public repository publication.
+- External Terminal interaction beyond attachment and UI cases outside the recorded scenarios.
 
 The [capability matrix](CLI-PARITY.md) and [architecture validation inventory](ARCHITECTURE.md#validation-matrix) retain these distinctions. A passing ordinary lifecycle does not certify universal CLI parity.

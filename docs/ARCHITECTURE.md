@@ -167,6 +167,6 @@ The following is a coverage inventory. Status distinguishes the [2026-10-17 veri
 | Native UI | Creation, selection, search, pagination, control, stop/resume and error states | Real terminal selection/input passed; isolated eight-check UI smoke passed for pagination, search, form, rename, stop, archive and restore; other cases remain bounded by that evidence |
 | Terminal capabilities | Resize, alternate screen, keys, paste, Unicode, IME, image clipboard and fallback | Specific multiline/accent/emoji inputs passed; external attachment confirmed; broader terminal features pending |
 | Package | Launch outside checkout with Finder-like environment | Finder launch without custom environment and isolated packaged-app UI smoke passed; clean-machine installer/notarization not tested |
-| Public repository | Clean install/checks, secret/path/runtime scan and documented license provenance | Pending |
+| Public repository | Clean install/checks, secret/path/runtime scan and documented license provenance | Public source and uploaded commit verified; source scan and provenance checked; remote install/build results are reported by [CI](https://github.com/TommyBez/agent-harbor/actions/workflows/ci.yml) |
 
 See [CLI capability boundaries](CLI-PARITY.md) and [Mobbin UX research](UX-RESEARCH.md).

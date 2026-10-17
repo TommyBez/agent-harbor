@@ -1,5 +1,7 @@
 # Agent Harbor
 
+[![Verify](https://github.com/TommyBez/agent-harbor/actions/workflows/ci.yml/badge.svg)](https://github.com/TommyBez/agent-harbor/actions/workflows/ci.yml)
+
 A native macOS workspace for persistent Claude Code and Codex sessions, shared between you and Grok Bot.
 
 Harbor keeps the original interactive CLIs in dedicated tmux sessions. Use the desktop app to find a conversation, observe its terminal, take control, or resume it after the CLI exits. Bots use the same local controller through a JSON-speaking command-line interface. Multiple sessions of either provider can run independently.

@@ -33,6 +33,8 @@ The local runner proves the controller and original-CLI lifecycle. The real-bot 
 
 The final local checks recorded **30/30 backend tests** with zero skips and **15/15 native model tests** passing. Source/markup checks, the final rebuild containing the parser fix and packaging checks also passed. These are local results. [GitHub Actions](https://github.com/TommyBez/agent-harbor/actions/workflows/ci.yml) separately runs the backend on Linux and macOS, plus native UI tests, checks, build and packaging on macOS; consult the run for the exact commit's remote result.
 
+The [remote run for implementation commit `a804fb5`](https://github.com/TommyBez/agent-harbor/actions/runs/39052726604) passed both jobs, including native tests, a clean macOS build and packaging. The Linux suite excludes the macOS-specific PTY test; that test runs in the macOS job.
+
 Backend coverage includes request identity, event attribution, control boundaries, startup-argument validation, persistence and fake-process lifecycle cases. Native model tests exercise the application state and list behavior; they do not substitute for operating the actual window.
 
 ### Metadata scale measurement
@@ -58,6 +60,8 @@ The watch test also exercises a large stored registry and suppresses unchanged s
 The human-input test used a multiline paste containing accented text and an emoji, `caffè 🚢`, in both selected providers. Each returned the expected `HUMAN_UI caffè 🚢` marker and the remembered `TESTS 2/2` result. Native conversation IDs and process IDs stayed unchanged. This demonstrates those specific paste/content cases and continued conversation identity; it does not certify arbitrary Unicode cursor behavior, every input method or image clipboard support.
 
 The user-facing **Passa a Grok** action then returned both sessions to the bot. Grok submitted follow-ups using stable request IDs and the `terminal-paste` transport. The prompts did not include the expected marker. At **19:10:21 Europe/Rome**, the real Codex Lab bot conversation displayed both replies containing the human-entered marker and `TESTS 2/2`. Both native conversation IDs and CLI PIDs remained unchanged. This completes the observed human → native UI → Grok → same-conversation response path for one session of each provider.
+
+A subsequent controller test used the final bundle's Node runtime and broker to stop and resume one real conversation per provider. Claude completed immediately. Codex displayed normal review for the seven observer hooks because their command paths had changed from the source checkout to the bundle. With the user's existing project/hook authorization, those hooks were reviewed and trusted in Codex's own UI. The first unobserved turn was not replayed automatically; after normal exit, a new request resumed the same conversation and completed without further intervention at **17:18:19 UTC**. Both providers recalled the original marker and `TESTS 2/2`. This is packaged-controller evidence, separate from the earlier real Grok chat scenario.
 
 For the external Terminal action, controller/tmux inspection confirmed the additional attachment to the same existing session and agent process. The UI automation tool did not permit control of Terminal.app, so this check stops at verified attachment. No external keystroke, menu or clipboard success is claimed.
 

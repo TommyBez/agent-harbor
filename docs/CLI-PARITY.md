@@ -49,7 +49,7 @@ Status refers to the [2026-10-17 verification checkpoint](VERIFICATION.md). A li
 | Startup options | Validated provider argument array | Supported options retained; reserved flags rejected without launching | Automated pass: literal arguments persist across store reopen and resume; lifecycle, permission and hook-disabling variants are rejected. Provider acceptance of every allowed option remains unverified |
 | Provider worktree | Observed same-repository directory | Resume uses saved directory and preserves its files | Pending |
 | GUI persistence | tmux owns process lifetime | Close/reopen GUI while original PID survives | Four processes survived GUI closure/reopen; final app and bundled replacement daemon adopted the same live processes |
-| Slash commands and menus | Terminal keystrokes | Navigate a real provider menu without intercepted keys | Pending |
+| Slash commands and menus | Terminal keystrokes | Navigate a real provider menu without intercepted keys | Codex hook review, trust and /exit menu exercised through the native terminal; broader menus remain unverified |
 | Interrupt | Terminal input while human owns it | Ctrl-C reaches the intended CLI and state is reported correctly | Pending |
 | Multiline paste | PTY/tmux bracketed paste | Text, line breaks and submission count preserved | Specific multiline input passed through native UI on one Claude and one Codex conversation |
 | Unicode and emoji | Renderer and terminal encoding | Correct content and cursor placement | Accented text and emoji content passed on both providers; general cursor/Unicode edge cases pending |

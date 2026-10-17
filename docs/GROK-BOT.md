@@ -33,6 +33,8 @@ HARBOR_CLI="$HARBOR_APP/Contents/Resources/harbor/bin/harbor.mjs"
 
 Keep the app installed at that location while its daemon and hooks are in use. tmux and the authenticated provider CLIs remain external prerequisites. A source CLI and bundle CLI can share state, but the first client starts the daemon from its own installation; do not mix incompatible releases against one state directory. Stop agents normally and follow a documented upgrade procedure before replacing resources used by live sessions.
 
+Complete normal project and hook trust in the chosen installation before expecting unattended bot startup. Codex may request hook review again when the observer command changes, including a move from a source checkout to the packaged app. Harbor reports missing observations and never approves that dialog itself. If a turn ran while hooks were untrusted, inspect the terminal rather than replaying it blindly; after approving the intended hooks, exit normally and resume with a new request ID for a new task. The packaged Codex resume was verified after this one-time setup.
+
 Shell variables and functions may not survive between separate Grok tool calls. Either supply the resolved paths in every invocation or define them in each script. Quote paths and pass arguments as an array when the tool supports it. Never interpolate a task's text or project path into an unquoted shell command.
 
 ## Bot instruction to copy

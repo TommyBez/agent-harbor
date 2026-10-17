@@ -1,0 +1,26 @@
+{
+  "name": "agent-harbor",
+  "version": "0.1.0",
+  "description": "A native desktop harbor for persistent Claude Code and Codex sessions, shared with your agents.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "bin": {
+    "harbor": "bin/harbor.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/backend/*.test.mjs",
+    "test:ui": "node scripts/native.mjs test",
+    "check": "node scripts/check.mjs",
+    "build": "node scripts/native.mjs build -Dautomation=true",
+    "dev": "node scripts/dev.mjs",
+    "package": "node scripts/package.mjs",
+    "doctor": "node bin/harbor.mjs doctor"
+  },
+  "devDependencies": {
+    "@native-sdk/cli": "0.6.2"
+  }
+}

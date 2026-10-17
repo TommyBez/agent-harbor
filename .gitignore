@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+.zig-cache/
+zig-out/
+zig-pkg/
+.native/
+dist/
+coverage/
+.local/
+*.log
+*.sqlite*
+*.db*
+*.sock
+.env
+.env.*
+!.env.example

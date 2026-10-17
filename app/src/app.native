@@ -1,0 +1,87 @@
+<column grow="1" gap="0">
+  <row height="64" padding="16" gap="12" cross="center" background="surface">
+    <icon name="terminal" foreground="accent" width="24" height="24"/>
+    <text size="heading">Agent Harbor</text>
+    <text foreground="text_muted" grow="1">Uno spazio per te e i tuoi agenti</text>
+    <badge variant="secondary">{activeCount} attive</badge>
+    <button icon="plus" on-press="new_session" variant="primary" disabled="{busy}">Nuova sessione</button>
+  </row>
+  <separator/>
+  <row grow="1" gap="0">
+    <column width="310" padding="14" gap="12" background="surface_subtle">
+      <search-field text="{searchText}" placeholder="Cerca sessione o progetto" on-input="search_edit"/>
+      <column gap="3">
+        <list-item icon="terminal" selected="{filter == 'all'}" on-press="filter_all">Tutte le sessioni · {allCount}</list-item>
+        <list-item icon="play" selected="{filter == 'active'}" on-press="filter_active">In attività · {activeCount}</list-item>
+        <list-item icon="alert" selected="{filter == 'attention'}" on-press="filter_attention">Da controllare · {attentionCount}</list-item>
+        <list-item icon="pause" selected="{filter == 'stopped'}" on-press="filter_stopped">Chiuse</list-item>
+        <list-item icon="archive" selected="{filter == 'archived'}" on-press="filter_archived">Archiviate</list-item>
+      </column>
+      <separator/>
+      <scroll grow="1" key="session-scroll">
+        <column gap="5">
+          <for each="visible" key="id" as="s">
+            <column padding="10" gap="5" selected="{s.selected}" on-press="select:{s.id}" role="listitem" label="{s.title}" radius="md">
+              <row gap="8" cross="center">
+                <text grow="1">{s.title}</text>
+                <if test="{s.attention}"><icon name="alert" foreground="warning" width="14" height="14"/></if>
+              </row>
+              <text foreground="text_muted" size="sm">{s.meta}</text>
+              <if test="{s.attention}"><text foreground="warning" size="sm">{s.status}</text></if>
+              <else><text foreground="accent" size="sm">{s.status}</text></else>
+            </column>
+          </for>
+          <else><text wrap="true" foreground="text_muted">Nessuna sessione in questa vista.</text></else>
+        </column>
+      </scroll>
+      <row gap="6" cross="center">
+        <text foreground="text_muted" grow="1" size="sm">{pageLabel}</text>
+        <button size="icon" variant="ghost" icon="chevron-left" label="Pagina precedente" disabled="{firstPage}" on-press="previous_page"/>
+        <button size="icon" variant="ghost" icon="chevron-right" label="Pagina successiva" disabled="{lastPage}" on-press="next_page"/>
+      </row>
+      <text foreground="text_muted" size="sm">{connection}</text>
+    </column>
+    <separator/>
+    <if test="{creating}">
+      <scroll grow="1"><column padding="32" gap="20">
+        <row cross="center"><text size="heading" grow="1">Nuova sessione</text><button variant="ghost" on-press="cancel_form" disabled="{busy}">Annulla</button></row>
+        <text foreground="text_muted" wrap="true">Scegli il progetto e l'agente. Ogni sessione conserva la propria conversazione.</text>
+        <column gap="8"><text>Agente</text><row gap="8"><toggle-button selected="{not form_claude}" on-press="choose_codex">Codex</toggle-button><toggle-button selected="{form_claude}" on-press="choose_claude">Claude Code</toggle-button></row></column>
+        <column gap="8"><text>Nome della sessione</text><text-field text="{formTitle}" placeholder="Es. Revisione del checkout" on-input="title_edit" autofocus="true"/></column>
+        <column gap="8"><text>Cartella del progetto</text><row gap="8"><text-field grow="1" text="{formProject}" placeholder="Percorso del progetto locale" on-input="project_edit"/><button icon="folder-open" on-press="choose_folder">Scegli cartella</button></row></column>
+        <column gap="8"><text>Primo compito · facoltativo</text><textarea height="160" text="{formPrompt}" placeholder="Cosa deve fare l'agente?" on-input="prompt_edit"/></column>
+        <button variant="ghost" on-press="toggle_advanced" selected="{advanced}">Opzioni di avvio</button>
+        <if test="{advanced}"><column gap="8"><text>Argomenti della CLI · facoltativi</text><textarea height="96" text="{formCliArgs}" placeholder="Array JSON di argomenti" on-input="cli_args_edit"/><text foreground="text_muted" wrap="true">Inserisci un array JSON, per esempio ["--model", "nome-modello"]. Ogni argomento viene passato alla CLI come testo. Le opzioni si conservano nelle riprese.</text></column></if>
+        <text wrap="true" foreground="text_muted">La sessione parte con il tuo controllo. Potrai passarla a Grok in qualsiasi momento. Le richieste di fiducia e autorizzazione restano nel terminale.</text>
+        <if test="{formHasTruncation}"><text foreground="destructive">Testo troppo lungo. Riducilo prima di continuare.</text></if>
+        <row><spacer grow="1"/><button variant="primary" icon="play" disabled="{cannotCreate}" on-press="create_session">Crea e avvia</button></row>
+      </column></scroll>
+    </if>
+    <else>
+      <if test="{hasSelection}">
+        <column grow="1" gap="0">
+          <column padding="18" gap="10" background="surface">
+            <row gap="8" cross="center"><text size="heading" grow="1">{selectedTitle}</text><badge variant="secondary">{selectedProvider}</badge><button size="icon" variant="ghost" icon="edit" label="Rinomina sessione" on-press="rename_session"/><button size="icon" variant="ghost" icon="info" label="Dettagli sessione" selected="{details}" on-press="show_details"/></row>
+            <text foreground="text_muted">{selectedProject}</text>
+            <if test="{renaming}"><row gap="8"><text-field grow="1" text="{renameText}" on-input="rename_edit" on-submit="save_name" placeholder="Nuovo nome" autofocus="true"/><button on-press="save_name" disabled="{busy}">Salva</button><button variant="ghost" on-press="cancel_name">Annulla nome</button></row></if>
+            <row gap="10" cross="center"><if test="{attention}"><badge foreground="warning">{selectedStatus}</badge></if><else><badge>{selectedStatus}</badge></else><text grow="1">{controlLabel}</text>
+              <if test="{human}"><button size="sm" variant="outline" disabled="{cannotRelease}" on-press="release_control">Passa a Grok</button></if>
+              <else><button size="sm" variant="primary" disabled="{busy}" on-press="take_control">Prendi il controllo</button></else>
+              <if test="{alive}"><button size="sm" variant="ghost" icon="external-link" disabled="{busy}" on-press="open_terminal">Apri in Terminale</button></if>
+            </row>
+          </column>
+          <separator/>
+          <row padding="12" gap="8" background="surface_subtle" cross="center"><icon name="eye" width="16" height="16" foreground="accent"/><text foreground="text_muted" grow="1">{controlHint}</text><if test="{alive}"><button size="sm" variant="ghost" icon="refresh-cw" on-press="reconnect">Ricollega</button></if></row>
+          <if test="{attention}"><row padding="12" gap="8"><icon name="alert" foreground="warning"/><text wrap="true" grow="1">{attentionHint}</text></row></if>
+          <if test="{terminalVisible}"><terminal key="agent-terminal" pty="{ptyKey}" scrollback="{scrollback}" grow="1" label="Terminale della sessione" on-terminal="terminal_state"/></if>
+          <else><column grow="1" gap="16" padding="40" main="center" cross="center"><icon name="pause" width="40" height="40" foreground="text_muted"/><text size="heading">La conversazione è conservata</text><text wrap="true" foreground="text_muted">Riprendi questa sessione per continuare dallo stesso punto.</text><if test="{canStart}"><button icon="play" variant="primary" disabled="{cannotStart}" on-press="start_session">Riprendi sessione</button></if><if test="{archived}"><button icon="archive" on-press="restore_session" disabled="{busy}">Ripristina dall'archivio</button></if></column></else>
+          <if test="{details}"><column padding="16" gap="8" background="surface_subtle"><row><text grow="1">Conversazione originale</text><button size="sm" variant="ghost" icon="copy" on-press="copy_id">Copia ID</button></row><text>{nativeId}</text><text foreground="text_muted" size="sm">Sessione Harbor · {selectedId}</text><text wrap="true" foreground="text_muted" size="sm">Apri in Terminale usa la stessa CLI e lo stesso contesto, anche per funzioni di input avanzate.</text></column></if>
+          <row padding="10" gap="8" cross="center"><text foreground="text_muted" size="sm" grow="1">La finestra può chiudersi. Il lavoro continua.</text><if test="{alive}"><button size="sm" variant="ghost" icon="pause" disabled="{cannotStop}" on-press="stop_session">Chiudi CLI</button></if><else><if test="{not archived}"><button size="sm" variant="ghost" icon="archive" disabled="{busy}" on-press="archive_session">Archivia</button></if></else></row>
+        </column>
+      </if>
+      <else><column grow="1" padding="40" gap="18" main="center" cross="center"><icon name="terminal" width="48" height="48" foreground="accent"/><text size="heading">Il lavoro continua, anche a finestra chiusa</text><text wrap="true" foreground="text_muted">Avvia Claude Code o Codex, segui il lavoro e passa il controllo a Grok quando vuoi.</text><button variant="primary" icon="plus" on-press="new_session">Crea la prima sessione</button><text foreground="text_muted">Le sessioni avviate da Grok compariranno qui.</text></column></else>
+    </else>
+  </row>
+  <separator/>
+  <status-bar>{notice}</status-bar>
+</column>

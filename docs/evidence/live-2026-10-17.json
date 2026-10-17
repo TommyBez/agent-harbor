@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "experiment": "four-original-interactive-cli-sessions",
+  "status": "passed",
+  "startedAt": "2026-10-17T16:44:45.778Z",
+  "completedAt": "2026-10-17T17:00:34.599Z",
+  "providers": {
+    "codex": 2,
+    "claude": 2
+  },
+  "sessions": [
+    {
+      "label": "codex-1",
+      "provider": "codex",
+      "actualTestsPassed": true,
+      "tests": "2/2",
+      "humanOwnershipEnforced": true,
+      "processExitObserved": true,
+      "sameNativeConversation": true,
+      "differentProcess": true,
+      "markerRecalled": true,
+      "resumeUsedNoTools": true
+    },
+    {
+      "label": "codex-2",
+      "provider": "codex",
+      "actualTestsPassed": true,
+      "tests": "2/2",
+      "humanOwnershipEnforced": true,
+      "processExitObserved": true,
+      "sameNativeConversation": true,
+      "differentProcess": true,
+      "markerRecalled": true,
+      "resumeUsedNoTools": true
+    },
+    {
+      "label": "claude-1",
+      "provider": "claude",
+      "actualTestsPassed": true,
+      "tests": "2/2",
+      "humanOwnershipEnforced": true,
+      "processExitObserved": true,
+      "sameNativeConversation": true,
+      "differentProcess": true,
+      "markerRecalled": true,
+      "resumeUsedNoTools": true
+    },
+    {
+      "label": "claude-2",
+      "provider": "claude",
+      "actualTestsPassed": true,
+      "tests": "2/2",
+      "humanOwnershipEnforced": true,
+      "processExitObserved": true,
+      "sameNativeConversation": true,
+      "differentProcess": true,
+      "markerRecalled": true,
+      "resumeUsedNoTools": true
+    }
+  ],
+  "allProcessesClosedTogether": true,
+  "fixtureUnchanged": true,
+  "limitations": [
+    "Normal CLI trust and permission prompts remain in force.",
+    "This scenario does not certify a full Mac reboot or every terminal feature."
+  ]
+}

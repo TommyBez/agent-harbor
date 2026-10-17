@@ -1,0 +1,118 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@native-sdk/cli':
+        specifier: 0.6.2
+        version: 0.6.2
+
+packages:
+
+  '@native-sdk/cli-darwin-arm64@0.6.2':
+    resolution: {integrity: sha512-UOFwhZO46KNDsq0yH+RrAU9At4xGilxDrepcKxKGiQ2z/C+PwcuODFlw/Wd6xjJbRQlhs3oMqYbsOdmIQ6YygA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@native-sdk/cli-darwin-x64@0.6.2':
+    resolution: {integrity: sha512-hs0dUz40GmTbsQPex0bVQ3kQ6IBNmRgKLczKLC1lY4PuxlhzmJl1sP/glK/fsIVHKmy22+vSpi9EzSJi0OpvdQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@native-sdk/cli-linux-arm64-gnu@0.6.2':
+    resolution: {integrity: sha512-T3BkE4/3qI+La1AaaQIa02U9mkwrth5hdBlF8X6T/Gy8Y43cRhoicNebSk5NFrZ/iKmyZxFByzX7jAWHUxZl8A==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@native-sdk/cli-linux-arm64-musl@0.6.2':
+    resolution: {integrity: sha512-gAMYMZP1KijtFdmywvbY+hAkYucnUkPb5wb6Iq3ySQuTkl6SfNOwMWemePNtD1fS66m/sn/udHYK+AR7IQo4xQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@native-sdk/cli-linux-x64-gnu@0.6.2':
+    resolution: {integrity: sha512-g+m+M0+PFJbwvkP4o5Bllhjg8rEq6Q17J6JzcWXFxBGSRtDy/qtTWX+pC73bna5EdV9Ig7LIUKlUsZoTN+XPBA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@native-sdk/cli-linux-x64-musl@0.6.2':
+    resolution: {integrity: sha512-Dt/FUp0Ka0fZhqokWIltRB77w1QOZtF7d9x8CD/78p8uX5fl940txXMi9EYXaNUgl/5Bd9KQWgjdonUt4rfQ2Q==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@native-sdk/cli-win32-arm64@0.6.2':
+    resolution: {integrity: sha512-zohUGP7g1mVe/Z02V30hlBH7yTDQ3KycHO0yPizcw+XFXpU5M+gROp64WE0ROcONs6AyyPwvXx6K0UM5FLej4g==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@native-sdk/cli-win32-x64@0.6.2':
+    resolution: {integrity: sha512-MqsdIP6GkZjf4f1rVvFl7n4CqDY5wSPZ95hWV+GU9B1q/wxb/MTIFn1R5K2BuX2NK30IHOtTafR5RuL892plrw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@native-sdk/cli@0.6.2':
+    resolution: {integrity: sha512-BQdEptKtvwxrs/tMw2VWd+g7y2z8xac6dpfGK/6Km/aV7zA5G6aBJU3AZuUBF6Xz0s4ffsKpzi5N8LhiGy9Q5Q==}
+    hasBin: true
+
+  '@typescript/typescript6@6.0.2':
+    resolution: {integrity: sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w==}
+    hasBin: true
+
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+snapshots:
+
+  '@native-sdk/cli-darwin-arm64@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-darwin-x64@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-linux-arm64-gnu@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-linux-arm64-musl@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-linux-x64-gnu@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-linux-x64-musl@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-win32-arm64@0.6.2':
+    optional: true
+
+  '@native-sdk/cli-win32-x64@0.6.2':
+    optional: true
+
+  '@native-sdk/cli@0.6.2':
+    dependencies:
+      '@typescript/old': typescript@6.0.3
+      '@typescript/typescript6': 6.0.2
+    optionalDependencies:
+      '@native-sdk/cli-darwin-arm64': 0.6.2
+      '@native-sdk/cli-darwin-x64': 0.6.2
+      '@native-sdk/cli-linux-arm64-gnu': 0.6.2
+      '@native-sdk/cli-linux-arm64-musl': 0.6.2
+      '@native-sdk/cli-linux-x64-gnu': 0.6.2
+      '@native-sdk/cli-linux-x64-musl': 0.6.2
+      '@native-sdk/cli-win32-arm64': 0.6.2
+      '@native-sdk/cli-win32-x64': 0.6.2
+
+  '@typescript/typescript6@6.0.2':
+    dependencies:
+      '@typescript/old': typescript@6.0.3
+
+  typescript@6.0.3: {}

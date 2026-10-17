@@ -100,10 +100,32 @@ For Claude Code, current primary documentation establishes that hook entries com
 
 This audit does not certify every user hook, managed policy or event. Representative existing hook execution alongside Harbor's observer remains a separate live validation item. Manually copying all user hooks into the invocation override would risk duplicate execution and is not required by this evidence.
 
+## Image clipboard: partial live pass
+
+An additional test exercised the packaged app at commit `6ae3191`, Native SDK **0.6.2**, Codex **0.162.1** and Claude Code **2.1.302** on macOS Apple Silicon. [Sanitized evidence](evidence/image-paste-2026-10-17.json) records the exact responses and boundaries.
+
+The test generated an 800×480 PNG containing an unpredictable four-digit number, a blue circle, an orange triangle and three green squares. The image was opened in Preview, all pixels selected and copied with Cmd+C. The test prompt supplied no image path, expected number, shape, color or count. Each CLI created its own clipboard attachment. The neutral prompt asked each to describe the attachment without tools or file reads.
+
+| Shortcut in Harbor's focused terminal | Codex | Claude Code |
+|---|---|---|
+| Cmd+V | No image attached | No image attached |
+| Ctrl+V | No image attached | No image attached |
+| Ctrl+Shift+V | `[Image #1]` appeared; correct visual answer | `[Image #1]` appeared; correct visual answer |
+
+The Native SDK automation delivered keyboard events through the real retained terminal input path with the actual macOS clipboard. Codex's native transcript contained an `input_image` block; Claude's contained an `image` block. Both identified **2022**, the blue circle, the orange triangle and three green squares, with **zero tool calls** in their image turns. The original native conversation IDs and process IDs stayed unchanged, and both sessions were returned to Grok's control in ready state.
+
+The cause of the shortcut limitation was checked in the installed SDK source: `WidgetKeyboardModifiers.hasCommandModifier()` treats Control and Super as command modifiers; `widgetKeyboardClipboardAction()` classifies both unshifted V chords as paste; `applyCanvasWidgetClipboardShortcut()` consumes the terminal event and reads only text. Adding Shift avoids that clipboard interceptor and lets the CLI process its own image shortcut. No runtime code or dependency was changed in this verification.
+
+Codex displayed observer-hook exit-code-127 warnings during its turn. Its visual answer and embedded image were independently verified in the terminal and native transcript; this test does not establish a fresh broker result receipt or repair those hook warnings. The earlier packaged-controller checkpoint remains a separate observation.
+
+![Synthetic fixture used for the clipboard test](images/image-paste-challenge.png)
+
+This proves one copied PNG through this route. It does not certify file-copy paste from Finder, screenshots from every clipboard source, multiple images, drag/drop, an external terminal or image delivery initiated by Grok.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.
-- Every terminal feature beyond the specific multiline/accent/emoji cases above, including Unicode cursor edge cases, IME, image clipboard, drag/drop and external editor integration.
+- Terminal features beyond the specific text and single-image paste cases above, including Unicode cursor edge cases, IME, other clipboard cases, drag/drop and external editor integration.
 - Every CLI startup flag, model, plugin, skill, MCP integration or provider update.
 - Real provider worktree onboarding and all advanced option combinations.
 - Sustained performance with large numbers of simultaneously active AI agents.

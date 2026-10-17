@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-17",
+  "appCommit": "6ae319192641b0af36e279e0bd37d0e444efd867",
+  "nativeSDK": "0.6.2",
+  "platform": "macOS Apple Silicon",
+  "fixture": {
+    "sha256": "d3eed6934dd9dc493144e2ad2cbe2edd692417a55e3c41763fabd916de6af35c",
+    "width": 800,
+    "height": 480,
+    "expected": {
+      "digits": "2022",
+      "left": "blue circle",
+      "right": "orange triangle pointing up",
+      "bottom": "three green squares"
+    }
+  },
+  "clipboardSource": "Preview: select all pixels, copy",
+  "inputRoute": "Native SDK retained terminal widget keyboard automation, real system clipboard",
+  "shortcutResults": {
+    "Command+V": "No image attachment in either CLI",
+    "Control+V": "No image attachment in either CLI",
+    "Control+Shift+V": "Image attachment and correct visual answer in both CLIs"
+  },
+  "codex": {
+    "version": "0.162.1",
+    "inputImageBlocks": 1,
+    "response": "Numero: 2022. A sinistra: un cerchio blu. A destra: un triangolo arancione. In basso: tre quadrati verdi.",
+    "toolCalls": 0,
+    "sameNativeConversation": true
+  },
+  "claude": {
+    "version": "2.1.302",
+    "inputImageBlocks": 1,
+    "response": "- **Numero in alto:** 2022, in cifre nere squadrate in stile pixel.\n- **Sinistra:** cerchio blu pieno.\n- **Destra:** triangolo arancione pieno, con la punta verso l'alto.\n- **In basso:** 3 quadrati verdi uguali, allineati in orizzontale.",
+    "toolCalls": 0,
+    "sameNativeConversation": true
+  },
+  "limitations": [
+    "One synthetic PNG copied from Preview; other clipboard sources, file clipboard and drag/drop unverified.",
+    "Codex displayed observer hook exit-code-127 warnings; visual answer and input_image were verified from terminal and native transcript, not from a new broker result receipt.",
+    "No runtime code was changed; standard paste shortcuts remain limited."
+  ],
+  "finalState": {
+    "ownersRestoredToGrok": true,
+    "sameNativeIdsAndPids": true,
+    "bothProcessesReady": true
+  }
+}

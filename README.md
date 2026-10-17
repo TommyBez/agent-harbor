@@ -94,6 +94,10 @@ Control is explicit: a session belongs to the human or to Grok. Watching a bot's
 
 The original CLI remains responsible for tools, permissions, project trust, user settings, skills, plugins and MCP servers. Harbor adds observation and lifecycle management. It does not bypass approvals or replace the CLI with a headless API. See [the architecture](docs/ARCHITECTURE.md).
 
+## Paste an image
+
+Take control of the session, focus its terminal and use **Ctrl+Shift+V** with an image copied to the macOS clipboard. Wait for `[Image #1]`, add your prompt and press Enter. This was verified with a PNG copied from Preview in both Codex and Claude Code. **Cmd+V and Ctrl+V currently do not attach images** in the embedded terminal; Native SDK 0.6.2 consumes those shortcuts as text paste. Drag/drop and other clipboard sources remain unverified. See the [test evidence](docs/VERIFICATION.md#image-clipboard-partial-live-pass).
+
 ## Local state and privacy
 
 Runtime data is stored outside the source checkout, by default in:

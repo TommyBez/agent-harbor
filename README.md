@@ -48,7 +48,7 @@ pnpm package
 
 Backend tests, native model tests, markup validation and a build cover different failure classes. Real CLI and Grok Bot journeys additionally require authenticated local providers and an explicitly selected test project; they are not implied by a successful build.
 
-Every pull request merged into `main` is tagged and published as a release with a DMG by GitHub Actions; see [Releasing](docs/RELEASING.md). Packaging is for a local macOS application. A generated bundle must not be described as signed and notarized for public distribution unless its release notes explicitly establish that.
+A pull request merged into `main` that changes the shipped application is tagged and published as a release with a DMG by GitHub Actions; see [Releasing](docs/RELEASING.md). Packaging is for a local macOS application. A generated bundle must not be described as signed and notarized for public distribution unless its release notes explicitly establish that.
 
 ## Bot interface
 

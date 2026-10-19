@@ -1,9 +1,11 @@
 name: Release
-# Every pull request merged into main is tagged vX.Y.Z and published as a GitHub
-# release with a DMG. Labels on the merged pull request choose the bump:
-# release:minor, release:major or release:skip; the default is a patch release.
-# Direct pushes to main are not released. A manual run builds and verifies the
-# DMG as a workflow artifact without tagging or publishing anything.
+# A pull request merged into main is tagged vX.Y.Z and published as a GitHub
+# release with a DMG when the shipped application changed since the last release
+# (scripts/release-scope.mjs); docs, tests, skills and workflows alone do not
+# release. Labels on the merged pull request: release:minor or release:major
+# choose the bump (patch by default), release:force releases without application
+# changes, release:skip never releases. Direct pushes to main are not released.
+# A manual run builds and verifies the DMG as an artifact without publishing.
 on:
   push:
     branches: [main]
@@ -37,24 +39,35 @@ jobs:
           release=false
           bump="patch"
           pr=""
+          labels=""
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             merged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0] // empty')
             if [ -n "$merged" ]; then
               pr=$(jq -r .number <<<"$merged")
               labels=",$(jq -r '[.labels[].name] | join(",")' <<<"$merged"),"
-              release=true
-              case "$labels" in *,release:skip,*) release=false ;; esac
               case "$labels" in *,release:major,*) bump=major ;; *,release:minor,*) bump=minor ;; esac
             fi
           fi
           git fetch --tags --force
+          # shellcheck disable=SC2046
+          scope=$(node scripts/release-scope.mjs "$GITHUB_SHA" $(git tag -l 'v*'))
+          reason="no merged pull request"
+          if [ -n "$pr" ]; then
+            if [[ "$labels" == *,release:skip,* ]]; then reason="release:skip label"
+            elif [[ "$labels" == *,release:force,* ]]; then release=true; reason="release:force label"
+            elif [ "$(jq -r .changed <<<"$scope")" = true ]; then release=true; reason="application changed since $(jq -r '.base // "the first release"' <<<"$scope")"
+            else reason="no application changes since $(jq -r .base <<<"$scope")"; fi
+          fi
           # shellcheck disable=SC2046
           version=$(node scripts/next-version.mjs "$bump" $(git tag -l 'v*'))
           {
             echo "release=$release"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
-          echo "Pull request: ${pr:-none} · bump: $bump · version: $version · publish: $release" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Pull request: ${pr:-none} · bump: $bump · version: $version · publish: $release ($reason)"
+            jq -r '.files[] | "- `" + . + "`"' <<<"$scope"
+          } >> "$GITHUB_STEP_SUMMARY"
   dmg:
     needs: plan
     if: needs.plan.outputs.release == 'true' || github.event_name == 'workflow_dispatch'

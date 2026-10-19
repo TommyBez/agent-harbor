@@ -16,8 +16,10 @@
     "test:ui": "node scripts/native.mjs test",
     "check": "node scripts/check.mjs",
     "build": "node scripts/native.mjs build -Dautomation=true",
+    "build:release": "node scripts/native.mjs build",
     "dev": "node scripts/dev.mjs",
     "package": "node scripts/package.mjs",
+    "dmg": "node scripts/dmg.mjs",
     "doctor": "node bin/harbor.mjs doctor"
   },
   "devDependencies": {

@@ -21,6 +21,10 @@ The first [verification checkpoint](docs/VERIFICATION.md) passed with two Codex 
 
 Native SDK is a pinned development dependency. Run commands through pnpm so the project-local SDK is used. CLI accounts, authentication, billing and provider terms remain separate from Harbor. A project may still require the provider's normal trust or permission confirmation.
 
+## Install
+
+Download the latest `Agent-Harbor-<version>-arm64.dmg` from [Releases](https://github.com/TommyBez/agent-harbor/releases), open it and drag **Agent Harbor** to **Applications**. The build is ad-hoc signed and not notarized, so macOS blocks the first launch: allow it in **System Settings › Privacy & Security › Open Anyway**, or run `xattr -dr com.apple.quarantine "/Applications/Agent Harbor.app"`. tmux and the authenticated original CLIs are still required; the app bundles its own Node.js runtime.
+
 ## Develop
 
 ```sh
@@ -44,7 +48,7 @@ pnpm package
 
 Backend tests, native model tests, markup validation and a build cover different failure classes. Real CLI and Grok Bot journeys additionally require authenticated local providers and an explicitly selected test project; they are not implied by a successful build.
 
-Packaging is for a local macOS application. A generated bundle must not be described as signed and notarized for public distribution unless its release notes explicitly establish that.
+Releases are built and published by GitHub Actions from a version tag; see [Releasing](docs/RELEASING.md). Packaging is for a local macOS application. A generated bundle must not be described as signed and notarized for public distribution unless its release notes explicitly establish that.
 
 ## Bot interface
 

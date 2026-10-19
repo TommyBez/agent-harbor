@@ -1,0 +1,94 @@
+name: Release
+# A pushed tag vX.Y.Z builds, tests and publishes the DMG as a GitHub release.
+# A manual run builds and verifies the DMG as a workflow artifact without publishing.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.16.0'
+      - run: npm install -g pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: brew list tmux >/dev/null 2>&1 || brew install tmux
+      - name: Check the version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          grep -q ".version = \"$version\"" app/app.zon || { echo "::error::app/app.zon does not declare version $version"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - run: pnpm test
+      - run: pnpm test:ui
+      - run: pnpm check
+      # Release builds omit the Native SDK automation server.
+      - run: pnpm build:release
+      - run: pnpm package
+      - run: pnpm dmg
+      - name: Verify the disk image
+        run: |
+          dmg="dist/Agent-Harbor-$VERSION-arm64.dmg"
+          (cd dist && shasum -a 256 -c "Agent-Harbor-$VERSION-arm64.dmg.sha256")
+          mount=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          test -L "$mount/Applications"
+          codesign --verify --deep --strict "$mount/Agent Harbor.app"
+          test -x "$mount/Agent Harbor.app/Contents/Resources/runtime/node"
+          test -f "$mount/Agent Harbor.app/Contents/Resources/harbor/broker/daemon.mjs"
+          if strings "$mount/Agent Harbor.app/Contents/MacOS/agent-harbor" | grep -q native-sdk-automation; then
+            echo "::error::The release binary contains the automation server"; exit 1
+          fi
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$mount/Agent Harbor.app/Contents/Info.plist" | grep -qx "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-harbor-${{ env.VERSION }}-dmg
+          path: |
+            dist/Agent-Harbor-*.dmg
+            dist/Agent-Harbor-*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: dmg
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-harbor-*-dmg
+          merge-multiple: true
+          path: release
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          prerelease=""
+          case "$version" in 0.*|*-*) prerelease="--prerelease" ;; esac
+          cat > notes.md <<EOF
+          ## Install
+
+          1. Download \`Agent-Harbor-$version-arm64.dmg\` (Apple silicon) and open it.
+          2. Drag **Agent Harbor** to **Applications**.
+          3. This build is ad-hoc signed, not notarized by Apple. On first launch macOS refuses to open it: open **System Settings › Privacy & Security** and choose **Open Anyway**, or run \`xattr -dr com.apple.quarantine "/Applications/Agent Harbor.app"\`.
+
+          Agent Harbor needs tmux and the original \`claude\` and/or \`codex\` CLIs installed and signed in. The app bundles its own Node.js runtime. Verify the download with the attached \`.sha256\` file: \`shasum -a 256 -c Agent-Harbor-$version-arm64.dmg.sha256\`.
+          EOF
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "Agent Harbor $version" --notes-file notes.md --generate-notes --verify-tag $prerelease

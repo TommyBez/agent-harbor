@@ -100,7 +100,7 @@ Desktop app / Grok Bot
         └── ...
 ```
 
-Closing the app detaches its view. An explicit stop requests normal CLI exit and preserves the conversation record. Resume uses that conversation's exact native ID. The desktop list is searchable and paged, while only the selected terminal is attached for display.
+Closing the app detaches its view. An explicit stop requests normal CLI exit and preserves the conversation record. Resume uses that conversation's exact native ID. The desktop list is searchable, paged and grouped by what needs you — attention first, then active, then closed — while only the selected terminal is attached for display. Cmd+N creates a session, Cmd+F searches, Cmd+1–9 and Cmd+Option+Up/Down switch sessions, and Cmd+I opens the details inspector.
 
 Control is explicit: a session belongs to the human or to Grok. Watching a bot's terminal does not take control. Requests have stable IDs so a caller can retrieve a result after a retry. Uncertain delivery after a crash is surfaced rather than blindly replayed.
 
@@ -133,9 +133,9 @@ The coding agents still communicate with their configured providers and may acce
 - [Native SDK skill provenance](docs/NATIVE-SKILLS.md): pinned upstream implementation guidance.
 - [Contributor instructions](AGENTS.md): invariants and validation expectations.
 
-![Agent Harbor desktop UI during the isolated fake-provider smoke test](docs/images/desktop-smoke.png)
+![Agent Harbor desktop UI with fake providers in an isolated demo registry](docs/images/desktop-redesign.png)
 
-*Actual application screenshot from the isolated desktop UI test: 26 session records, one fake provider, zero real AI launches. The terminal content is test output, not a real Codex or Claude response. The screenshot is unmodified.*
+*Actual development-build screenshot in an isolated demo registry with the fake provider: sessions grouped by what needs you, a permission request surfaced as an attention banner, a Grok-owned session and the selected terminal. The terminal content is test output, not a real Codex or Claude response. The screenshot is unmodified.*
 
 ## License
 

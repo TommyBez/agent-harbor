@@ -90,6 +90,22 @@ The smoke completed at **17:08:16 UTC**. The runner recorded six screenshots and
 
 See [the desktop smoke runner](../test/live/desktop-smoke.mjs) for its isolation and zero-real-provider checks. This test covers UI behavior and local process coordination, complementing the separate four-real-provider scenario above.
 
+## Redesigned desktop UI: 2026-10-19 checkpoint
+
+The desktop interface was redesigned: a unified titlebar header, triage sections in the sidebar, a **Tu / Grok** control segment, contextual attention and observation banners, a details inspector, a guided new-session form, light/dark palettes, context menus and Command shortcuts. This checkpoint ran a **development build** (`pnpm build`, automation enabled) against isolated `HARBOR_HOME` directories with the fake provider. **No real AI provider was launched.**
+
+- The [desktop smoke runner](../test/live/desktop-smoke.mjs), updated for the new labels, passed all **8 checks** on a fresh home: 25 seeded names across two pages, search and Grok-owned disabled resume, form validation and empty-prompt creation, rename, normal close, archive/restore and final inventory. The [sanitized report](evidence/desktop-smoke-2026-10-19.json) omits session and process identifiers.
+- Native model tests passed **20/20**, including new coverage for section ordering, collapse and search, default selection, relative Italian times, shortcut mapping, notice lifetimes and context-menu targeting. Markup checked against the refreshed model contract.
+- Additional automation on a demo home exercised the attention banner for a real permission request from the fake CLI, the Grok observation banner, the inspector, creation through the form, Command shortcuts (`native automate shortcut`), Cmd+F focus followed by typing into search, and a row context-menu rename. Every snapshot reported `dispatch_errors=0`.
+- The dark palette was inspected through a temporary build that forced the dark scheme; the shipped build follows the system appearance. A live system appearance switch was not exercised.
+- Automation screenshots render the canvas only, so the traffic-light overlay itself is not visible in them. The layout used the reported chrome inset; the real titlebar was not separately photographed.
+
+The same session found a controller defect: under a non-UTF-8 locale (`LANG`/`LC_CTYPE` unset, common for Finder-launched apps), tmux 3.6b rewrites the tab separators in `-F` output to `_`. Every pane then looked dead, so live sessions displayed as closed and no terminal attached. tmux output now uses a printable separator, and a run whose stored pane ID carries the escaped form recovers through its primary pane. A regression test reproduces the locale and failed before the fix.
+
+![Agent Harbor redesigned desktop UI with fake providers in an isolated demo registry](images/desktop-redesign.png)
+
+*Development build in an isolated demo registry with the fake provider: a permission request in the attention section, a Grok-owned session and the selected terminal. The terminal shows fake test output, not a real Codex or Claude response. The image is copied unchanged.*
+
 ## Hook configuration compatibility audit
 
 Codex's ordinary effective configuration and its hook registry are distinct views. An isolated **Codex 0.162.1** app-server probe requested only initialization, `config/read` and `hooks/list`; it did not create a conversation or invoke a model. The fixture declared a user hook file, a user inline hook, a project inline hook and an invocation `-c` hook for the same event.

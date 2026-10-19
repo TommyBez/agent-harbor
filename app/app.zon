@@ -15,6 +15,9 @@
                 .title = "Agent Harbor",
                 .width = 1380,
                 .height = 900,
+                .min_width = 980,
+                .min_height = 620,
+                .titlebar = "hidden_inset_tall",
                 .restore_state = true,
                 .restore_policy = "center_on_primary",
                 .views = .{

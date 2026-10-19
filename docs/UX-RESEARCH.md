@@ -96,16 +96,17 @@ Query: “Developer coding workspace with project files sidebar, editor tabs, an
 
 ### Information hierarchy
 
-1. Application toolbar: product identity, connection/health indicator, New session.
-2. Session sidebar: search, compact state filters, scrollable session list. Each row shows name, provider, project basename, state and ownership with restrained iconography. The selected row has a visible background and focus state. Name collisions are resolved by the project path in the detail header.
-3. Main workspace: session name and project, process status, explicit current controller, primary state-dependent operation, original terminal.
-4. Secondary details: native conversation ID, session ID, process ID, last activity and lifecycle events. These are diagnostic details, not required vocabulary for normal use.
+1. Unified window header: the content extends under a tall macOS titlebar. The sidebar half holds the traffic lights, product name and New session; the workspace half is the session header. It is also the window drag region.
+2. Session sidebar: search, a Sessions/Archive scope and collapsible sections in triage order — Needs attention, Active, Closed. Each compact row shows a status glyph, name, relative last activity, provider, project basename and a Grok marker when the bot owns it. The selected row has a visible background. A right-click menu offers rename, control, terminal, copy, close/resume and archive/restore for that row. The footer shows controller connection, transient confirmations and pagination only when there is more than one page.
+3. Main workspace: session name, provider and home-relative path, a state chip, a two-segment **Tu / Grok** control, rename, external terminal, details and the state-dependent lifecycle action, then the original terminal.
+4. Contextual banners between header and terminal: needs attention (with the specific reason, such as a permission request), Grok has control (observation with a single Take control action), and a pending human request. Failures stay in a dismissible workspace banner; routine confirmations fade from the sidebar footer after five seconds.
+5. Secondary details: a closable right inspector with native conversation ID, session ID, agent, working directory, controller, process, run, creation and last update, the last attention code and a terminal reconnect action. These are diagnostic details, not required vocabulary for normal use.
 
-The sidebar should remain usable with 0, 1, 10 and 100 sessions. Do not give each session a fixed application tab or instantiate a terminal renderer for every historical session. Keep the selected session stable when rows update or the active filter changes; explicitly indicate when the selection lies outside the current filter.
+The sidebar should remain usable with 0, 1, 10 and 100 sessions. Do not give each session a fixed application tab or instantiate a terminal renderer for every historical session. Keep the selected session stable when rows update or the scope changes. A session moves between sections only on meaningful lifecycle evidence (needs attention, process alive, closed), never on every working/ready turn, so rows do not jump while agents work. Startup selects the remembered session unless it is archived; otherwise it prefers a session that needs attention, then an active one.
 
 ### Visual direction
 
-Use a calm light desktop shell with neutral surfaces, restrained teal or blue emphasis, subtle separators and one strong selection treatment. Terminal colors should preserve the agent CLI's own output and legibility. Use native typography and controls where possible. Avoid oversized cards, decorative illustrations, gradients and marketing copy. Use short, literal labels. Minimum practical window size should leave a useful terminal width; collapse secondary details before the terminal becomes narrow.
+Use a calm desktop shell with neutral surfaces, one restrained green identity hue, subtle separators and one strong selection treatment. Light and dark palettes follow the system appearance; high contrast uses the toolkit's own register. The terminal inherits the shell background and text colors. Terminal colors should preserve the agent CLI's own output and legibility. Use native typography and controls where possible. Avoid oversized cards, decorative illustrations, gradients and marketing copy. Use short, literal labels. Minimum practical window size should leave a useful terminal width; collapse secondary details before the terminal becomes narrow.
 
 ### State model visible to users
 
@@ -122,7 +123,7 @@ Do not collapse these dimensions into one green dot. “Closed” is not “Fail
 
 ### Create and start
 
-Open New session, select Claude Code or Codex, choose a local project, optionally name the session and supply its first task. Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval.
+Open New session, select Claude Code or Codex, choose a local project, optionally name the session and supply its first task. The form defaults to the selected session's provider and project, offers up to four recent projects as one-click chips, names the session after the project folder when the name is empty, and starts with Cmd+Enter from the task field. Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval.
 
 Accept when multiple independent sessions of the same provider can be created and selected, their terminal output remains distinct, and creation failures identify the affected session and a recoverable action.
 
@@ -144,13 +145,13 @@ Accept when both CLI processes can exit, a window can close and reopen, and Resu
 
 ### Find and triage
 
-Search narrows by session title, provider and project. Filters expose active, attention and closed sessions. A no-results state keeps the search field visible and offers clearing the filter. A blank workspace explains how to create the first session. A missing CLI or tmux dependency offers a precise diagnosis; do not replace the entire interface with an opaque generic error.
+Search narrows by session title, provider, project and Grok ownership, and temporarily ignores collapsed sections so a match is never hidden. Sections expose attention, active and closed sessions; the archive is a separate scope. A no-results state keeps the search field visible and offers clearing the search. A blank registry shows a welcome workspace with one-click Claude Code and Codex starts; a just-created session shows a local spinner until the controller lists it. A missing CLI or tmux dependency offers a precise diagnosis; do not replace the entire interface with an opaque generic error.
 
 ## Accessibility and keyboard behavior
 
 - Provide accessible names for icon controls, labeled text fields and text descriptions of status; never rely on color alone.
 - Support predictable Tab order, visible keyboard focus, Escape to dismiss sheets and focus restoration to the originating control.
-- Keep terminal key handling separate from app shortcuts. Preserve the CLI's interactive keys, paste and interrupt behavior. Do not globally intercept ordinary terminal shortcuts.
+- Keep terminal key handling separate from app shortcuts. Preserve the CLI's interactive keys, paste and interrupt behavior. Do not globally intercept ordinary terminal shortcuts. App shortcuts always carry Command: Cmd+N new session, Cmd+F search, Cmd+I details, Cmd+1–9 open the Nth row on the page, Cmd+Option+Up/Down previous/next session. Selecting a session moves keyboard focus to its terminal.
 - Do not steal focus when background sessions update. Announce important state changes sparingly rather than reading every output chunk.
 - Keep text scalable and contrast sufficient in both terminal and shell. Loading and error states must be perceivable without animation.
 - Long names and project paths must truncate predictably with full values accessible in details; session identity must remain unambiguous.

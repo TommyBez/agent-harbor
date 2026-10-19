@@ -168,36 +168,37 @@ export async function runSmoke(options) {
     report.seedIds = seeded.map(item => item.id);
     // A unique backend-generated marker must appear before any widget interaction.
     // This protects a simultaneously running personal app from an incorrect --cwd.
-    await until('dedicated registry visible in the selected app', text => text.includes(prefix) && text.includes('25 sessioni · pagina 1/2') && text.includes('Gestore connesso'));
+    await until('dedicated registry visible in the selected app', text => text.includes(prefix) && has(text, { role: 'tab', name: 'Sessioni · 25' }) && text.includes('Pagina 1 di 2') && text.includes('Gestore connesso'));
     check('Running UI is connected to the dedicated 25-session registry');
     const rows = text => parseWidgets(text).filter(w => w.role === 'listitem' && w.name.startsWith(prefix));
     const first = await until('first page and enabled attributes', text => rows(text).length === 20 && button(text, 'Pagina precedente', false) && button(text, 'Pagina successiva', true));
     const firstNames = rows(first).map(w => w.name);
     await click({ role: 'button', name: 'Pagina successiva' });
-    const second = await until('second page', text => text.includes('25 sessioni · pagina 2/2') && rows(text).length === 5 && button(text, 'Pagina precedente', true) && button(text, 'Pagina successiva', false));
+    const second = await until('second page', text => text.includes('Pagina 2 di 2') && rows(text).length === 5 && button(text, 'Pagina precedente', true) && button(text, 'Pagina successiva', false));
     assert.equal(new Set([...firstNames, ...rows(second).map(w => w.name)]).size, 25, 'Pagination must expose 25 distinct backend titles.');
     assert.deepEqual([...firstNames, ...rows(second).map(w => w.name)].sort(), seeded.map(s => s.title).sort());
     await capture('01-pagination');
     check('Both pages expose all 25 exact names and correct disabled navigation');
     await click({ role: 'button', name: 'Pagina precedente' });
-    await until('first page restored', text => text.includes('25 sessioni · pagina 1/2'));
+    await until('first page restored', text => text.includes('Pagina 1 di 2'));
 
     const bot = seeded[0];
     await fill('Cerca sessione o progetto', bot.title);
-    await until('search finds a session from outside the first page', text => rows(text).length === 1 && has(text, { role: 'listitem', name: bot.title }) && text.includes('1 sessioni · pagina 1/1'));
+    await until('search finds a session from outside the first page', text => rows(text).length === 1 && has(text, { role: 'listitem', name: bot.title }) && text.includes('1 risultato'));
     await click({ role: 'listitem', name: bot.title });
     await until('Grok ownership disables resume', text => button(text, 'Riprendi sessione', false) && button(text, 'Prendi il controllo', true));
     await capture('02-search-and-disabled-resume');
     check('Search selects the exact Grok-owned session; resume is disabled');
     await fill('Cerca sessione o progetto', '');
-    await until('search cleared', text => text.includes('25 sessioni · pagina 1/2'));
+    await until('search cleared', text => text.includes('Pagina 1 di 2'));
 
     await click({ role: 'button', name: 'Nuova sessione' });
-    await until('new session form', text => button(text, 'Crea e avvia', false) && has(text, { role: 'textbox', placeholder: 'Cosa deve fare l\'agente?' }));
+    await until('new session form', text => has(text, { role: 'button', name: 'Crea e avvia' }) && has(text, { role: 'textbox', placeholder: 'Cosa deve fare l\'agente?' }));
     await fill('Percorso del progetto locale', '');
     const createdTitle = `${prefix} created`;
+    await until('empty project restores the example name', text => has(text, { role: 'textbox', placeholder: 'Es. Revisione del checkout' }));
     await fill('Es. Revisione del checkout', createdTitle);
-    await until('missing project disables creation', text => button(text, 'Crea e avvia', false));
+    await until('missing project disables creation', text => button(text, 'Crea e avvia', false) && has(text, { role: 'textbox', placeholder: 'Es. Revisione del checkout' }));
     await fill('Percorso del progetto locale', project);
     await fill('Cosa deve fare l\'agente?', '');
     await until('complete form enables creation', text => button(text, 'Crea e avvia', true));
@@ -229,7 +230,7 @@ export async function runSmoke(options) {
     await click({ role: 'button', name: 'Archivia' });
     await readback(items => items.find(item => item.id === created.id)?.status === 'archived');
     await until('archived session removed from all-sessions list', text => !has(text, { role: 'listitem', name: renamedTitle }));
-    await click({ role: 'listitem', name: 'Archiviate' });
+    await click({ role: 'tab', name: 'Archivio · 1' });
     await until('archive filter contains the session', text => has(text, { role: 'listitem', name: renamedTitle }));
     await click({ role: 'listitem', name: renamedTitle });
     await until('archive offers restore and no start', text => button(text, 'Ripristina dall\'archivio', true) && !has(text, { role: 'button', name: 'Riprendi sessione' }));
@@ -237,8 +238,8 @@ export async function runSmoke(options) {
     await click({ role: 'button', name: 'Ripristina dall\'archivio' });
     await readback(items => items.find(item => item.id === created.id)?.status === 'stopped');
     await until('archive view clears after restore', text => !has(text, { role: 'listitem', name: renamedTitle }));
-    await click({ role: 'listitem', name: 'Tutte le sessioni · 26' });
-    await until('restored session visible', text => has(text, { role: 'listitem', name: renamedTitle }) && text.includes('26 sessioni · pagina 1/2'));
+    await click({ role: 'tab', name: 'Sessioni · 26' });
+    await until('restored session visible', text => has(text, { role: 'listitem', name: renamedTitle }) && text.includes('Pagina 1 di 2'));
     await click({ role: 'listitem', name: renamedTitle });
     await until('restored session can resume', text => button(text, 'Riprendi sessione', true));
     await capture('06-restored');

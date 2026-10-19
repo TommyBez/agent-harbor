@@ -56,8 +56,9 @@ test "1000 metadata records commit atomically across bounded chunks and preserve
     try std.testing.expect(model.pending_snapshot==null);
     var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
     model.page=49;
-    try std.testing.expectEqualStrings("session-980",model.visible(arena.allocator())[0].id);
-    try std.testing.expectEqual(@as(usize,20),model.visible(arena.allocator()).len);
+    const page=sessionRows(&model,arena.allocator());
+    try std.testing.expectEqualStrings("session-980",page[0].id);
+    try std.testing.expectEqual(@as(usize,20),page.len);
 }
 
 test "mismatched incomplete dropped and corrupt snapshots preserve committed state" {
@@ -190,6 +191,14 @@ test "advanced CLI arguments stay literal and invalid JSON cannot start a proces
     try std.testing.expectEqualStrings("",model.formCliArgs());
 }
 
+fn sessionRows(model: *const main.Model, arena: std.mem.Allocator) []const main.Row {
+    const rows=model.visible(arena);
+    const out=arena.alloc(main.Row,rows.len) catch return &.{};
+    var count:usize=0;
+    for(rows)|r| { if(!r.header){out[count]=r;count+=1;} }
+    return out[0..count];
+}
+
 fn completeEffect(model: *main.Model, fx: *main.Effects, msg: main.Msg) void {
     // Unit tests dispatch the same result message after retiring the fake request.
     // Runtime integration owns queue delivery; no subprocess or file is created here.
@@ -302,11 +311,22 @@ test "many sessions of one provider remain independently selectable and paginate
     defer model.deinit();
     try std.testing.expectEqual(@as(usize,55),model.allCount());
     var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
-    try std.testing.expectEqual(@as(usize,20),model.visible(arena.allocator()).len);
-    main.update(&model,.next_page,&fx);try std.testing.expectEqualStrings("session-20",model.visible(arena.allocator())[0].id);
+    // Live sessions are listed before closed ones; each section has one header per page.
+    const first=model.visible(arena.allocator());
+    try std.testing.expect(first[0].header and first[0].group==.active);
+    try std.testing.expectEqual(@as(usize,20),sessionRows(&model,arena.allocator()).len);
+    try std.testing.expectEqualStrings("session-0",first[1].id);
+    main.update(&model,.next_page,&fx);
+    const second=sessionRows(&model,arena.allocator());
+    try std.testing.expectEqualStrings("session-40",second[0].id);
+    try std.testing.expectEqualStrings("session-1",second[8].id);
     main.update(&model,.{.select="session-31"},&fx);try std.testing.expectEqualStrings("session-31",model.selectedTitle());
-    main.update(&model,.filter_active,&fx);try std.testing.expectEqual(@as(usize,28),model.filteredCount());
+    main.update(&model,.{.toggle_group=.closed},&fx);try std.testing.expectEqual(@as(usize,28),model.filteredCount());
     try std.testing.expectEqualStrings("session-31",model.selectedId());
+    try std.testing.expectEqual(@as(usize,1),model.page);
+    // A search ignores collapsed sections so a match is never hidden.
+    model.search_buffer.set("session-31");model.page=0;
+    try std.testing.expectEqual(@as(usize,1),sessionRows(&model,arena.allocator()).len);
 }
 
 test "human and bot ownership guard UI actions independently of process liveness" {
@@ -352,4 +372,119 @@ test "markup builds empty, creation, selected and many-row states" {
     try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"one\",\"title\":\"Review\",\"status\":\"attention\",\"alive\":true}]}");
     defer model.deinit();model.creating=false;model.details=true;model.renaming=true;
     ui=main.AppUi.init(arena.allocator());_=try ui.finalize(try view.build(&ui,&model));
+}
+
+test "sections put attention first, keep the archive separate and select what needs a human" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,
+        \\{"sessions":[
+        \\{"id":"old","title":"Old","status":"archived"},
+        \\{"id":"closed","title":"Closed","status":"stopped"},
+        \\{"id":"live","title":"Live","alive":true,"status":"ready","owner":"grok"},
+        \\{"id":"blocked","title":"Blocked","alive":true,"status":"attention","error":"PERMISSION_REQUIRED"}]}
+    );
+    try std.testing.expectEqualStrings("blocked",model.selectedId());
+    try std.testing.expectEqualStrings("Autorizzazione richiesta",model.attentionTitle());
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    const rows=model.visible(arena.allocator());
+    try std.testing.expectEqual(@as(usize,6),rows.len);
+    try std.testing.expect(rows[0].header and rows[0].group==.attention);
+    try std.testing.expectEqualStrings("Da controllare · 1",rows[0].heading);
+    try std.testing.expectEqualStrings("blocked",rows[1].id);
+    try std.testing.expect(rows[1].attention and rows[1].selected);
+    try std.testing.expectEqualStrings("live",rows[3].id);
+    try std.testing.expect(rows[3].grok and rows[3].ready);
+    try std.testing.expectEqualStrings("closed",rows[5].id);
+    try std.testing.expectEqual(@as(usize,3),model.allCount());
+    try std.testing.expectEqual(@as(usize,1),model.archivedCount());
+    main.update(&model,.filter_archived,&fx);
+    const archive=model.visible(arena.allocator());
+    try std.testing.expectEqual(@as(usize,2),archive.len);
+    try std.testing.expectEqualStrings("old",archive[1].id);
+    main.update(&model,.filter_all,&fx);
+    main.update(&model,.{.toggle_group=.active},&fx);
+    const collapsed=model.visible(arena.allocator());
+    try std.testing.expect(collapsed[2].header and collapsed[2].collapsed);
+    try std.testing.expectEqualStrings("closed",collapsed[4].id);
+    // Keyboard stepping walks visible rows only.
+    main.update(&model,.select_next,&fx);
+    try std.testing.expectEqualStrings("closed",model.selectedId());
+    main.update(&model,.select_next,&fx);
+    try std.testing.expectEqualStrings("closed",model.selectedId());
+    main.update(&model,.select_previous,&fx);
+    try std.testing.expectEqualStrings("blocked",model.selectedId());
+    main.update(&model,.{.select_index=1},&fx);
+    try std.testing.expectEqualStrings("closed",model.selectedId());
+}
+
+test "timestamps render as compact relative Italian times" {
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    const a=arena.allocator();
+    const base=main.parseTimestamp("2026-10-19T07:14:26.881Z").?;
+    try std.testing.expectEqual(@as(i64,1792394066),base);
+    try std.testing.expectEqualStrings("adesso",main.relativeTime(a,base+10,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("5 min",main.relativeTime(a,base+300,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("3 h",main.relativeTime(a,base+3*3600+5,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("ieri",main.relativeTime(a,base+30*3600,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("4 g",main.relativeTime(a,base+4*86400,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("19 ott",main.relativeTime(a,base+30*86400,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("29 feb",main.relativeTime(a,base,"2024-02-29T23:59:59Z"));
+    try std.testing.expectEqualStrings("",main.relativeTime(a,0,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("",main.relativeTime(a,base,"garbage"));
+    try std.testing.expect(main.parseTimestamp(null)==null);
+}
+
+test "shortcuts map to session commands without claiming plain keys" {
+    try std.testing.expectEqual(main.Msg.new_session,main.onCommand("session.new").?);
+    try std.testing.expectEqual(main.Msg.select_next,main.onCommand("session.next").?);
+    try std.testing.expectEqual(@as(usize,0),main.onCommand("session.1").?.select_index);
+    try std.testing.expectEqual(@as(usize,8),main.onCommand("session.9").?.select_index);
+    try std.testing.expect(main.onCommand("session.0")==null);
+    try std.testing.expect(main.onCommand("unknown")==null);
+}
+
+test "failures persist until dismissed while confirmations expire" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"one\",\"owner\":\"grok\",\"alive\":true,\"status\":\"ready\"}]}");
+    main.update(&model,.take_control,&fx);
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited,.output="{\"ok\":false,\"error\":{\"code\":\"CONTROL_DENIED\",\"message\":\"denied\"}}"}});
+    try std.testing.expect(model.showFailure() and !model.showNotice());
+    try std.testing.expect(std.mem.startsWith(u8,model.notice(),"Grok ha il controllo"));
+    main.update(&model,.{.notice_expired=.{.key=2}},&fx);
+    try std.testing.expect(model.showFailure());
+    main.update(&model,.dismiss_notice,&fx);
+    try std.testing.expect(!model.showFailure());
+    main.update(&model,.take_control,&fx);
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output="{\"ok\":true}"}});
+    try std.testing.expect(model.showNotice() and model.noticeSuccess());
+    main.update(&model,.{.notice_expired=.{.key=2}},&fx);
+    try std.testing.expect(!model.showNotice());
+}
+
+test "context menu actions target their own row and the form defaults to that session" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"a\",\"title\":\"A\",\"alive\":true,\"status\":\"ready\"},{\"id\":\"b\",\"title\":\"B\",\"provider\":\"claude\",\"project\":\"/work/shop\"}]}");
+    try std.testing.expectEqualStrings("a",model.selectedId());
+    main.update(&model,.{.row_rename="b"},&fx);
+    try std.testing.expectEqualStrings("b",model.selectedId());
+    try std.testing.expect(model.renaming);
+    try std.testing.expectEqualStrings("B",model.renameText());
+    main.update(&model,.{.row_archive="b"},&fx);
+    const request=fx.pendingSpawnAt(fx.pendingSpawnCount()-1).?;
+    try std.testing.expectEqualStrings("archive",request.argv[2]);
+    try std.testing.expectEqualStrings("b",request.argv[3]);
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output="{\"ok\":true}"}});
+    main.update(&model,.new_session,&fx);
+    try std.testing.expect(model.form_claude);
+    try std.testing.expectEqualStrings("/work/shop",model.formProject());
+    // The session name is optional and defaults to the project folder.
+    try std.testing.expectEqualStrings("shop",model.effectiveTitle());
+    try std.testing.expect(!model.cannotCreate());
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    try std.testing.expectEqual(@as(usize,1),model.recentProjects(arena.allocator()).len);
+    main.update(&model,.{.choose_provider="codex"},&fx);
+    try std.testing.expect(!model.form_claude);
 }

@@ -4,6 +4,10 @@ Grok Bot needs a local command-execution tool on the same Mac as Harbor. The int
 
 The desktop app and the bot must use the same Harbor state directory. The default is the current user's `Library/Application Support/Agent Harbor` directory. If you choose `HARBOR_HOME`, set the same value for both. Different values intentionally create separate registries.
 
+## Agent skill
+
+The repository ships an [`agent-harbor` skill](../skills/agent-harbor/SKILL.md) that packages the rules below for any agent that loads skills: `npx skills add TommyBez/agent-harbor --skill agent-harbor`, or copy `skills/agent-harbor` into the agent's skills directory. The copyable instruction later on this page remains the option for bots without skill support.
+
 ## Choose a portable command path
 
 Use one of these setups. The paths are examples based on installation layout, not paths tied to a developer's account.

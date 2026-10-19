@@ -52,6 +52,14 @@ Every pull request merged into `main` is tagged and published as a release with 
 
 ## Bot interface
 
+The [`agent-harbor` skill](skills/agent-harbor/SKILL.md) teaches an AI agent this interface: locating the CLI, creating and resuming sessions, request IDs, waiting for answers, images, and respecting human control. Install it into an agent that supports skills with:
+
+```sh
+npx skills add TommyBez/agent-harbor --skill agent-harbor
+```
+
+or copy the `skills/agent-harbor` folder into the agent's skills directory.
+
 Run `node bin/harbor.mjs --help` for the current command contract. Commands return JSON; `watch` streams newline-delimited snapshots. `wait` returns when the specified request finishes, requires attention or reaches its timeout.
 
 See [Grok Bot setup](docs/GROK-BOT.md) for portable source/bundle command paths and a copyable bot instruction. Harbor is invoked through Grok Bot's local command execution; it does not require a public server.

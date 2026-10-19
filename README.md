@@ -19,7 +19,7 @@ The first [verification checkpoint](docs/VERIFICATION.md) passed with two Codex 
 - Original `codex` and `claude` CLI installations, authenticated through their normal login flows.
 - A local project you are authorized to use with the selected CLI.
 
-Native SDK is a pinned development dependency. Run commands through pnpm so the project-local SDK is used. CLI accounts, authentication, billing and provider terms remain separate from Harbor. A project may still require the provider's normal trust or permission confirmation.
+Native SDK is a pinned development dependency. Run commands through pnpm so the project-local SDK is used. CLI accounts, authentication, billing and provider terms remain separate from Harbor. A new project still asks for the provider's trust confirmation, which you can answer from Harbor or pre-authorize ([workspace trust](docs/WORKSPACE-TRUST.md)).
 
 ## Install
 
@@ -116,7 +116,9 @@ Closing the app detaches its view. An explicit stop requests normal CLI exit and
 
 Control is explicit: a session belongs to the human or to Grok. Watching a bot's terminal does not take control. Requests have stable IDs so a caller can retrieve a result after a retry. Uncertain delivery after a crash is surfaced rather than blindly replayed.
 
-The original CLI remains responsible for tools, permissions, project trust, user settings, skills, plugins and MCP servers. Harbor adds observation and lifecycle management. It does not bypass approvals or replace the CLI with a headless API. See [the architecture](docs/ARCHITECTURE.md).
+The original CLI remains responsible for tools, permissions, project trust, user settings, skills, plugins and MCP servers. Harbor adds observation and lifecycle management. It does not bypass approvals or replace the CLI with a headless API.
+
+A new folder's trust question appears as a **Trust needed** banner that you answer with one click, even while Grok has control. Folders you pre-authorize (**Always trust ‹parent›**, or `harbor trusted-folders --add`) are answered for you, so bot sessions there start unattended. Tool permissions are never answered for you. See [workspace trust](docs/WORKSPACE-TRUST.md). See [the architecture](docs/ARCHITECTURE.md).
 
 ## Paste an image
 
@@ -141,6 +143,7 @@ The coding agents still communicate with their configured providers and may acce
 - [CLI capability preservation](docs/CLI-PARITY.md): tested-versus-expected boundaries and same-session terminal fallback.
 - [Grok Bot setup](docs/GROK-BOT.md): integration paths, bot instructions, ownership and retries.
 - [CLI startup options](docs/STARTUP-OPTIONS.md): supported argument arrays, worktrees and lifecycle boundaries.
+- [Workspace trust](docs/WORKSPACE-TRUST.md): answering folder trust and Codex hook review from Harbor, and pre-authorized folders.
 - [Verification record](docs/VERIFICATION.md): real-provider evidence, automated checks and unresolved capabilities.
 - [Native SDK skill provenance](docs/NATIVE-SKILLS.md): pinned upstream implementation guidance.
 - [Contributor instructions](AGENTS.md): invariants and validation expectations.

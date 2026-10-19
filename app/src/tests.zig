@@ -517,3 +517,55 @@ test "system appearance and window chrome changes re-theme and re-layout live" {
     main.update(&model,.{.chrome=.{}},&fx);
     try std.testing.expectEqual(@as(f32,16),model.chromeLeading());
 }
+
+test "a trust prompt is answered from the banner without taking control" {
+    var model:main.Model=.{};var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"t\",\"owner\":\"grok\",\"alive\":true,\"pending\":true,\"status\":\"attention\",\"error\":\"TRUST_REQUIRED\",\"project\":\"/Users/example/play-games/arrow\",\"trustFolder\":\"/Users/example/play-games/arrow\",\"trustParent\":\"/Users/example/play-games\"}]}");
+    defer model.deinit();
+    try std.testing.expect(model.trustNeeded());
+    try std.testing.expectEqualStrings("Trust this folder?",model.attentionTitle());
+    try std.testing.expectEqualStrings("Trust needed",model.selected().?.statusName());
+    try std.testing.expectEqualStrings("/Users/example/play-games/arrow",model.trustFolder());
+    try std.testing.expectEqualStrings("play-games",model.trustParentName());
+    main.update(&model,.trust_parent,&fx);
+    const request=fx.pendingSpawnAt(0).?;
+    try std.testing.expectEqual(@as(usize,6),request.argv.len);
+    try std.testing.expectEqualStrings("trust",request.argv[2]);
+    try std.testing.expectEqualStrings("t",request.argv[3]);
+    try std.testing.expectEqualStrings("/Users/example/play-games",request.argv[5]);
+    try std.testing.expectEqualStrings("grok",model.selected().?.owner);
+    try std.testing.expectEqualStrings("Trust folder",model.trustAction());
+}
+
+test "Codex hook review uses the same one-click banner with its own copy" {
+    var model:main.Model=.{};var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"h\",\"provider\":\"codex\",\"owner\":\"grok\",\"alive\":true,\"status\":\"attention\",\"error\":\"HOOK_TRUST_REQUIRED\",\"project\":\"/Users/example/play-games/arrow\",\"trustFolder\":\"/Users/example/play-games/arrow\"}]}");
+    defer model.deinit();
+    try std.testing.expect(model.trustNeeded());
+    try std.testing.expectEqualStrings("Trust Codex hooks?",model.attentionTitle());
+    try std.testing.expectEqualStrings("Trust hooks",model.trustAction());
+    main.update(&model,.trust_folder,&fx);
+    try std.testing.expectEqualStrings("trust",fx.pendingSpawnAt(0).?.argv[2]);
+}
+
+test "the trust banner offers no parent when it would be too broad, and other attention keeps take control" {
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    var view=try canvas.MarkupView(main.Model,main.Msg).init(arena.allocator(),main.app_markup);
+    var model:main.Model=.{};var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"t\",\"owner\":\"human\",\"alive\":true,\"status\":\"attention\",\"error\":\"TRUST_REQUIRED\",\"project\":\"/Users/example/arrow\",\"trustFolder\":\"/Users/example/arrow\"}]}");
+    defer model.deinit();
+    try std.testing.expect(!model.canTrustParent());
+    var ui=main.AppUi.init(arena.allocator());_=try ui.finalize(try view.build(&ui,&model));
+    main.update(&model,.trust_parent,&fx);
+    try std.testing.expectEqual(@as(usize,0),fx.pendingSpawnCount());
+    main.update(&model,.trust_folder,&fx);
+    const request=fx.pendingSpawnAt(0).?;
+    try std.testing.expectEqual(@as(usize,4),request.argv.len);
+    var other:main.Model=.{};var fx2=main.Effects.init(std.testing.allocator);defer fx2.deinit();fx2.executor=.fake;
+    try loadSnapshot(&other,&fx2,"{\"sessions\":[{\"id\":\"p\",\"owner\":\"grok\",\"alive\":true,\"status\":\"attention\",\"error\":\"PERMISSION_REQUIRED\"}]}");
+    defer other.deinit();
+    try std.testing.expect(!other.trustNeeded());
+    main.update(&other,.trust_folder,&fx2);
+    try std.testing.expectEqual(@as(usize,0),fx2.pendingSpawnCount());
+    ui=main.AppUi.init(arena.allocator());_=try ui.finalize(try view.build(&ui,&other));
+}

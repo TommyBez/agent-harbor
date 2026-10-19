@@ -10,7 +10,7 @@ export class Store {
       const check = this.db.prepare('PRAGMA quick_check').get().quick_check;
       if (check !== 'ok') fail('DATABASE_CORRUPT', check);
       const version = this.db.prepare('PRAGMA user_version').get().user_version;
-      if (version > 4) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
+      if (version > 5) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
       if (version === 0) this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY, title TEXT NOT NULL, provider TEXT NOT NULL CHECK(provider IN ('codex','claude')),
@@ -22,7 +22,7 @@ export class Store {
         CREATE TABLE runs (
           id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), tmux_name TEXT NOT NULL UNIQUE,
           started_at TEXT NOT NULL, ended_at TEXT, pid INTEGER, pane_id TEXT, hooks_ready INTEGER NOT NULL DEFAULT 0,
-          offset INTEGER NOT NULL DEFAULT 0, attention TEXT
+          offset INTEGER NOT NULL DEFAULT 0, attention TEXT, purpose TEXT NOT NULL DEFAULT 'cli', trust TEXT, trust_folder TEXT
         );
         CREATE TABLE requests (
           session_id TEXT NOT NULL REFERENCES sessions(id), request_id TEXT NOT NULL, run_id TEXT NOT NULL REFERENCES runs(id),
@@ -37,7 +37,7 @@ export class Store {
           UNIQUE(run_id, source_offset));
         CREATE INDEX events_run ON events(run_id, seq);
         CREATE TABLE audit (seq INTEGER PRIMARY KEY, time TEXT NOT NULL, action TEXT NOT NULL, session_id TEXT, details TEXT NOT NULL);
-        PRAGMA user_version=4; COMMIT;`);
+        PRAGMA user_version=5; COMMIT;`);
       if (version === 1) this.transaction(() => {
         const columns = table => new Set(this.all('PRAGMA table_info(' + table + ')').map(column => column.name));
         if (!columns('runs').has('pane_id')) this.db.exec('ALTER TABLE runs ADD COLUMN pane_id TEXT');
@@ -57,6 +57,13 @@ export class Store {
       if (version >= 1 && version <= 3) this.transaction(() => {
         this.db.exec("ALTER TABLE requests ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
         this.db.exec('PRAGMA user_version=4');
+      });
+      // purpose 'trust' marks Harbor's trust helper; trust records the CLI's workspace-trust dialog for a run.
+      if (version >= 1 && version <= 4) this.transaction(() => {
+        this.db.exec("ALTER TABLE runs ADD COLUMN purpose TEXT NOT NULL DEFAULT 'cli'");
+        this.db.exec('ALTER TABLE runs ADD COLUMN trust TEXT');
+        this.db.exec('ALTER TABLE runs ADD COLUMN trust_folder TEXT');
+        this.db.exec('PRAGMA user_version=5');
       });
       fs.chmodSync(filename, 0o600);
     } catch (error) { this.db?.close(); if (error.code?.startsWith('SQLITE') || !error.code) fail('DATABASE_UNAVAILABLE', `State database could not be opened; it was not reset: ${error.message}`); throw error; }

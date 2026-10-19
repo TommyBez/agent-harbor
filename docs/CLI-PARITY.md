@@ -6,11 +6,11 @@ Agent Harbor runs the original interactive Claude Code and Codex CLIs. The goal 
 
 - Authentication, subscription/provider access and model availability.
 - Project instructions, skills, plugins, MCP connections and user settings.
-- Tool approval policies, project trust and permission dialogs.
+- Tool approval policies and permission dialogs. Project trust stays a CLI dialog, but Harbor can answer it for the human ([workspace trust](WORKSPACE-TRUST.md)).
 - Interactive slash commands, menus, conversation compaction and provider-specific features.
 - Native conversation persistence and exact-ID resume.
 
-Harbor does not copy these into its own settings UI or replace the interactive process with a simplified chat API. It adds observational hooks for correlation and does not change global configuration, grant permissions or bypass trust. Provider updates can change terminal behavior or hook contracts; support must be rechecked rather than inferred from an older version.
+Harbor does not copy these into its own settings UI or replace the interactive process with a simplified chat API. It adds observational hooks for correlation and does not change global configuration, grant permissions or bypass trust checks. Provider updates can change terminal behavior or hook contracts; support must be rechecked rather than inferred from an older version.
 
 ## Startup options
 
@@ -62,7 +62,7 @@ Status refers to the [2026-10-17 verification checkpoint](VERIFICATION.md). A li
 | External editor/subprocess | CLI launching its normal tools | Return to same conversation after interactive child exits | Pending |
 | Skills, plugins and MCP | Existing provider configuration | Representative installed extension works unchanged | Pending |
 | User/project hooks | Invocation-local observation added to existing hooks | Existing hook still executes and can retain its normal decisions | Partial: Codex registry aggregation verified; Claude documented merge; execution coverage pending |
-| Permission/trust prompts | Original provider UI | New-project trust and tool approvals remain visible and effective | Normal trust UI observed; comprehensive policy/tool-prompt cases pending |
+| Permission/trust prompts | Original provider UI | New-project trust and tool approvals remain visible and effective | Folder trust and Codex hook review answered from Harbor and inside pre-authorized folders, live on both providers (including a Claude worktree); tool-prompt cases pending |
 | Bot/human handoff | Controller owner + tmux client writability | No wrong-owner input; same conversation continues | Passed on one session per provider: human UI input, Passa a Grok, real bot follow-up and recalled answer under unchanged native ID/PID |
 | External terminal handoff | Same tmux session | Same PID/native ID, human input, then safe return to bot | Partial: UI button attached a second client to the existing Codex conversation/process; external typing/menu and return unverified |
 | Provider update compatibility | Version probe + regression suite | Hook correlation and terminal smoke test on each declared version | Pending |
@@ -70,7 +70,7 @@ Status refers to the [2026-10-17 verification checkpoint](VERIFICATION.md). A li
 ## Honest failure behavior
 
 - Missing CLI, authentication or dependency: display the actionable cause; do not substitute another provider.
-- Missing hook trust or blocked observation: keep the original terminal accessible and report that structured readiness/results are unavailable.
+- Unrecognized trust dialog or blocked observation: keep the original terminal accessible and report that structured readiness/results are unavailable.
 - Lost native identity: do not resume “latest” or silently create a different conversation.
 - Uncertain prompt delivery: preserve its receipt and require reconciliation; do not replay automatically.
 - A running turn: do not label it ready merely because there is a final-looking line on screen.

@@ -123,7 +123,7 @@ Do not collapse these dimensions into one green dot. “Closed” is not “Fail
 
 ### Create and start
 
-Open New session, select Claude Code or Codex, choose a local project, optionally name the session and supply its first task. The form defaults to the selected session's provider and project, offers up to four recent projects as one-click chips, names the session after the project folder when the name is empty, and starts with Cmd+Enter from the task field. Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval.
+Open New session, select Claude Code or Codex, choose a local project, optionally name the session and supply its first task. The form defaults to the selected session's provider and project, offers up to four recent projects as one-click chips, names the session after the project folder when the name is empty, and starts with Cmd+Enter from the task field. Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval, unless the human pre-authorized its parent folder. Show the CLI's trust question as a Harbor banner the human can answer without taking control.
 
 Accept when multiple independent sessions of the same provider can be created and selected, their terminal output remains distinct, and creation failures identify the affected session and a recoverable action.
 

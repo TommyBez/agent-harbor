@@ -16,7 +16,16 @@ export function launchCommand(session, config, prompt, images = []) {
     if (prompt) args.push('--', prompt);
     return { binary, args };
   }
+  const filename = claudeHooks(config, hook);
+  return { binary, args: [...cliArgsForLaunch(session), session.resuming ? '--resume' : '--session-id', session.native_id, '--settings', filename, ...(prompt ? ['--', prompt] : [])] };
+}
+function claudeHooks(config, hook) {
   const filename = path.join(config.home, 'claude-hooks.json');
   fs.writeFileSync(filename, JSON.stringify({ hooks: Object.fromEntries([...OBSERVED_EVENTS, 'StopFailure', 'Notification'].map(event => [event, hook])) }), { mode: 0o600 });
-  return { binary, args: [...cliArgsForLaunch(session), session.resuming ? '--resume' : '--session-id', session.native_id, '--settings', filename, ...(prompt ? ['--', prompt] : [])] };
+  return filename;
+}
+/** Plain interactive Claude with no conversation, so it can show its own workspace-trust dialog. */
+export function trustHelperCommand(config) {
+  const command = [process.execPath, path.join(ROOT, 'broker/hooks/observe.mjs'), 'claude'].map(quote).join(' ');
+  return { binary: executable('claude', config), args: ['--settings', claudeHooks(config, [{ hooks: [{ type: 'command', command, timeout: 3 }] }])] };
 }

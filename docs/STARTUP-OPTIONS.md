@@ -1,6 +1,6 @@
 # CLI startup options
 
-A Harbor session can store additional arguments for its original interactive CLI. They are literal argument strings, not a shell command. Settings, login and project trust remain owned by Claude Code or Codex.
+A Harbor session can store additional arguments for its original interactive CLI. They are literal argument strings, not a shell command. Settings and login remain owned by Claude Code or Codex; project trust is answered in their own dialog ([workspace trust](WORKSPACE-TRUST.md)).
 
 ```sh
 harbor create --provider codex --project "$PWD" --title "Review" \
@@ -31,13 +31,15 @@ Harbor rejects options that collide with its managed lifecycle:
 - Provider subcommands and positional prompt arguments. Use Harbor lifecycle commands and `--text`.
 - Headless output, background/remote/cloud launch modes and alternative app entry points. Managed sessions use the original local interactive CLI.
 - Hook/settings replacement, hook-disabled modes and hook-trust bypass flags. The observer must remain available for reliable response attribution. Codex `--disable hooks`, `features.hooks` overrides and whole `features` table replacements are reserved; other individual feature overrides remain available.
-- Explicit permission/sandbox bypass modes. Harbor does not grant project trust or tool approvals.
+- Explicit permission/sandbox bypass modes. Harbor never grants tool approvals and never bypasses the trust dialog.
 
 An unknown option returns `UNSUPPORTED_CLI_ARGUMENT`. A reserved one returns `RESERVED_CLI_ARGUMENT`. A newer provider option may require an adapter update. This is not a claim that every historical, future, noninteractive or provider-management subcommand can be launched as a Harbor conversation.
 
 ## Worktree behavior
 
 `--worktree` creates a worktree only on the first launch. Claude's optional worktree name is supported. The observer accepts a changed working directory only after Git confirms that it belongs to the same repository, then records that directory. A resumed process starts in the recorded directory and omits the worktree-creation flag, preserving the original workspace rather than creating another one.
+
+Claude refuses `--worktree` in a folder it does not trust yet. Harbor then shows Claude's trust dialog in a helper and repeats the identical first launch once it is answered ([details](WORKSPACE-TRUST.md#worktrees)).
 
 If the worktree is missing, resume returns `WORKTREE_MISSING`. Restore that directory before retrying. The CLI's own exit questions, including worktree retention questions, remain visible. Harbor does not answer them or force termination on an exit timeout.
 

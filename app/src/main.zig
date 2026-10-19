@@ -54,6 +54,8 @@ pub const Session = struct {
     closing: bool = false,
     @"error": ?[]const u8 = null,
     nativeSessionId: ?[]const u8 = null,
+    trustFolder: ?[]const u8 = null,
+    trustParent: ?[]const u8 = null,
     runId: ?[]const u8 = null,
     pid: ?i64 = null,
     createdAt: ?[]const u8 = null,
@@ -63,6 +65,8 @@ pub const Session = struct {
     pub fn failed(s: *const Session) bool { return eq(s.status, "error"); }
     pub fn needsAttention(s: *const Session) bool { return s.failed() or (s.alive and eq(s.status, "attention")); }
     pub fn starting(s: *const Session) bool { return s.alive and eq(s.status, "starting"); }
+    /// The CLI is waiting on a folder-trust or Codex hook-review dialog; the human answers it from Harbor.
+    pub fn trustNeeded(s: *const Session) bool { const code = s.@"error" orelse ""; return s.alive and eq(s.status, "attention") and (eq(code, "TRUST_REQUIRED") or eq(code, "HOOK_TRUST_REQUIRED")); }
     pub fn working(s: *const Session) bool { return s.alive and !s.needsAttention() and (s.pending or eq(s.status, "running") or eq(s.status, "starting")); }
     pub fn ready(s: *const Session) bool { return s.alive and !s.needsAttention() and !s.working(); }
     pub fn group(s: *const Session) Group {
@@ -74,6 +78,7 @@ pub const Session = struct {
         if (s.isArchived()) return "Archived";
         if (s.failed()) return "Error";
         if (!s.alive) return "Closed";
+        if (s.trustNeeded()) return "Trust needed";
         if (s.needsAttention()) return "Needs attention";
         if (s.closing) return "Closing";
         if (s.starting()) return "Starting";
@@ -129,7 +134,7 @@ pub const Msg = union(enum) {
     title_edit: canvas.TextInputEvent, project_edit: canvas.TextInputEvent, prompt_edit: canvas.TextInputEvent,
     toggle_advanced, cli_args_edit: canvas.TextInputEvent, pick_project: []const u8,
     choose_provider: []const u8, choose_folder, folder_done: sdk.EffectExit,
-    take_control, release_control, start_session, stop_session, archive_session, restore_session,
+    take_control, release_control, trust_folder, trust_parent, start_session, stop_session, archive_session, restore_session,
     rename_session, rename_edit: canvas.TextInputEvent, save_name, cancel_name,
     reconnect, show_details, open_terminal, copy_id, copy_session_id, previous_page, next_page, dismiss_notice,
     row_rename: []const u8, row_take: []const u8, row_release: []const u8, row_terminal: []const u8, row_copy: []const u8,
@@ -163,7 +168,7 @@ pub const Model = struct {
     connected: bool = false,
     notice_buffer: canvas.TextBuffer(1536) = .{},
     notice_kind: NoticeKind = .info,
-    action: enum { other, create, start, control, external, stop, archive, restore, rename } = .other,
+    action: enum { other, create, start, control, external, stop, archive, restore, rename, trust } = .other,
     attached_id: canvas.TextBuffer(64) = .{},
     attached_run_id: canvas.TextBuffer(64) = .{},
     attached: bool = false,
@@ -189,7 +194,7 @@ pub const Model = struct {
     chrome_left: f32 = 0,
     chrome_top: f32 = 0,
     chrome_center: f32 = 0,
-    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "pending", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "chrome_center", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
+    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "pending", "trustParent", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "chrome_center", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
     pub fn deinit(m: *Model) void { discardPending(m); if (m.snapshot) |p| p.deinit(); m.snapshot = null; }
     pub fn sessions(m: *const Model) []const Session { return if (m.snapshot) |p| p.value.sessions else &.{}; }
     pub fn selected(m: *const Model) ?Session { for (m.sessions()) |s| { if (eq(s.id, m.selection.text())) return s; } return null; }
@@ -248,6 +253,12 @@ pub const Model = struct {
     pub fn pending(m: *const Model) bool { return if (m.selected()) |s| s.pending else false; }
     pub fn archived(m: *const Model) bool { return if (m.selected()) |s| s.isArchived() else false; }
     pub fn attention(m: *const Model) bool { return if (m.selected()) |s| s.needsAttention() else false; }
+    pub fn trustNeeded(m: *const Model) bool { return if (m.selected()) |s| s.trustNeeded() else false; }
+    pub fn trustFolder(m: *const Model) []const u8 { return if (m.selected()) |s| s.trustFolder orelse s.path() else ""; }
+    pub fn trustParent(m: *const Model) []const u8 { return if (m.selected()) |s| s.trustParent orelse "" else ""; }
+    pub fn canTrustParent(m: *const Model) bool { return m.trustParent().len > 0; }
+    pub fn trustAction(m: *const Model) []const u8 { return if (eq(m.errorCode(), "HOOK_TRUST_REQUIRED")) "Trust hooks" else "Trust folder"; }
+    pub fn trustParentName(m: *const Model) []const u8 { return std.fs.path.basename(m.trustParent()); }
     pub fn controlLabel(m: *const Model) []const u8 { return if (m.human()) "You have control" else "Grok has control"; }
     pub fn controlHint(m: *const Model) []const u8 {
         if (m.human() and m.pending()) return "Finish the request in the terminal before handing over control or closing the CLI.";
@@ -259,6 +270,8 @@ pub const Model = struct {
         const s = m.selected() orelse return "";
         if (s.failed()) return "The session has an error";
         const code = s.@"error" orelse return "Needs your attention";
+        if (eq(code, "TRUST_REQUIRED")) return "Trust this folder?";
+        if (eq(code, "HOOK_TRUST_REQUIRED")) return "Trust Codex hooks?";
         if (eq(code, "PERMISSION_REQUIRED")) return "Permission requested";
         if (eq(code, "CLI_ATTENTION_REQUIRED")) return "The CLI is waiting for a reply";
         if (eq(code, "HOOKS_NOT_READY")) return "Observation not active yet";
@@ -270,6 +283,8 @@ pub const Model = struct {
     }
     pub fn attentionHint(m: *const Model) []const u8 {
         const code = m.errorCode();
+        if (eq(code, "HOOK_TRUST_REQUIRED")) return "Codex found new or changed hooks, such as Harbor's observer after an update. Trusting lets them run, also outside the sandbox. To review them one by one, take control.";
+        if (eq(code, "TRUST_REQUIRED")) return "The CLI asks before opening this folder. Trusting lets it read, edit and run files here, including the folder's own settings and hooks. You don't need to take control.";
         if (eq(code, "PERMISSION_REQUIRED")) return if (m.human()) "The agent is asking to use a tool. Answer in the terminal: Harbor never approves anything for you." else "The agent is asking to use a tool. Take control and answer in the terminal: Harbor never approves anything for you.";
         if (eq(code, "HOOKS_NOT_READY")) return "The CLI has not confirmed Harbor's observation. Check the terminal for a project trust prompt.";
         if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "The task was sent but the CLI has not accepted it yet. Check the terminal before retrying.";
@@ -502,6 +517,9 @@ fn errorCopy(code: []const u8, message: []const u8) []const u8 {
     if (eq(code, "CONTROL_CHANGED")) return "Control changed during the operation. No input was sent: check the terminal.";
     if (eq(code, "CLI_NOT_READY")) return "The CLI is not ready. Open the terminal to resolve trust, permissions or hooks.";
     if (eq(code, "REQUEST_UNRESOLVED")) return "A previous delivery has no receipt. Check the terminal before sending more.";
+    if (eq(code, "TRUST_PROMPT_ABSENT")) return "The trust prompt is no longer open. The CLI may already be starting.";
+    if (eq(code, "TRUST_PROMPT_CHANGED")) return "The trust prompt changed before Harbor could answer. Answer it in the terminal.";
+    if (eq(code, "TRUSTED_FOLDER_TOO_BROAD") or eq(code, "INVALID_TRUSTED_FOLDER")) return message;
     if (eq(code, "WORKTREE_MISSING")) return "The saved working directory no longer exists. Harbor does not resume in a different folder.";
     if (eq(code, "DEPENDENCY_MISSING")) return "A dependency is missing (tmux or the agent's CLI). Run harbor doctor for details.";
     if (eq(code, "INVALID_PROJECT")) return "The project folder does not exist or is not a directory.";
@@ -713,6 +731,8 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .create_file_saved => |r| { m.busy = false; if (r.outcome == .ok) { run(m, fx, &.{ "create", "--request-file", m.create_file_path.text() }); } else failure(m, fx, "The request was not saved. Retry to continue the same creation."); },
         .take_control => { if (!m.hasSelection() or m.busy or m.human()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "human" }); },
         .release_control => { if (!m.hasSelection() or m.cannotRelease()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "grok" }); },
+        .trust_folder => { if (!m.trustNeeded() or m.busy) return; m.action = .trust; run(m, fx, &.{ "trust", m.selectedId() }); },
+        .trust_parent => { if (!m.trustNeeded() or m.busy or !m.canTrustParent()) return; m.action = .trust; run(m, fx, &.{ "trust", m.selectedId(), "--folder", m.trustParent() }); },
         .start_session => { if (!m.hasSelection() or !m.canStart() or m.cannotStart()) return; m.action = .start; notice(m, fx, "Resuming the conversation..."); run(m, fx, &.{ "start", m.selectedId(), "--actor", "human" }); },
         .stop_session => { if (m.cannotStop()) return; m.action = .stop; notice(m, fx, "Closing the CLI. The conversation stays saved."); run(m, fx, &.{ "stop", m.selectedId(), "--actor", "human" }); },
         .archive_session => { if (!m.hasSelection() or m.alive() or m.archived() or m.busy) return; m.action = .archive; run(m, fx, &.{ "archive", m.selectedId() }); },
@@ -770,6 +790,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
                 .archive => "Session archived.",
                 .restore => "Session restored.",
                 .rename => "Name updated.",
+                .trust => "Trusted. The session continues on its own.",
                 .other => "Operation completed.",
             });
             if (m.action == .control) m.focus_terminal = true;

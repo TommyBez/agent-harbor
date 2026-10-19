@@ -25,7 +25,11 @@ Every command prints one JSON object. Failures are `{"ok": false, "error": {"cod
 | `SESSION_STOPPED` | The CLI is not running | `resume --actor grok` with a new request ID |
 | `SESSION_ARCHIVED` | The session is archived | Tell the user; run `restore` only if they ask |
 | `SESSION_ALIVE` | `archive` was attempted while the CLI is running | `stop` it first, and only if the user asked to archive |
-| `CLI_NOT_READY`, `HOOKS_NOT_READY`, session `status: attention` | Trust, login, permission or hook review is pending in the terminal | Tell the user which session needs them; do not approve |
+| `TRUST_REQUIRED`, `HOOK_TRUST_REQUIRED` (in `session.error`) | The CLI asks to trust the folder (`session.trustFolder`) or, in Codex, to trust new or changed hooks | Tell the user once to click Trust in Agent Harbor; then `wait --through-attention` with the same request ID |
+| `TRUST_DECLINED` (in `request.error` and `session.error`) | The human declined trust; no conversation was created | Report it; `start` again with a new request ID only if the user asks |
+| `TRUST_HELPER_FAILED` (in `request.error`) | Harbor could not open Claude's trust dialog for a worktree launch; no conversation was created | Report it; the human checks `doctor` and the terminal |
+| `TRUST_HUMAN_ONLY` | `trust` or `trusted-folders --add/--remove` was run as the bot | Never run these commands; the human decides |
+| `CLI_NOT_READY`, `HOOKS_NOT_READY`, session `status: attention` | Login, permission, an unrecognized dialog or hook observation is pending in the terminal | Tell the user which session needs them; do not approve |
 | `PERMISSION_REQUIRED`, `CLI_ATTENTION_REQUIRED` (in `session.error`) | The agent is waiting for a human decision | Same as above |
 | `PROMPT_NOT_ACKNOWLEDGED` (in `session.error`) | The task was sent but the CLI never accepted it | Ask the human to check the terminal before retrying |
 | `REQUEST_ID_CONFLICT` | The request ID was used before with different text or images | Fix your bookkeeping; a new task needs a new ID |

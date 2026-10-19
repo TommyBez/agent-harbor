@@ -246,8 +246,8 @@ test "human attention copy explains blocked controls and rejects direct release"
     var model:main.Model=.{};defer model.deinit();
     var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
     try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"one\",\"owner\":\"human\",\"alive\":true,\"pending\":true,\"status\":\"attention\"}]}");
-    try std.testing.expect(std.mem.startsWith(u8,model.attentionHint(),"Verifica la richiesta"));
-    try std.testing.expect(std.mem.startsWith(u8,model.controlHint(),"Concludi la richiesta"));
+    try std.testing.expect(std.mem.startsWith(u8,model.attentionHint(),"Check the request"));
+    try std.testing.expect(std.mem.startsWith(u8,model.controlHint(),"Finish the request"));
     main.update(&model,.release_control,&fx);
     try std.testing.expect(!model.busy);
     try std.testing.expectEqual(@as(usize,0),fx.pendingSpawnCount());
@@ -385,12 +385,12 @@ test "sections put attention first, keep the archive separate and select what ne
         \\{"id":"blocked","title":"Blocked","alive":true,"status":"attention","error":"PERMISSION_REQUIRED"}]}
     );
     try std.testing.expectEqualStrings("blocked",model.selectedId());
-    try std.testing.expectEqualStrings("Autorizzazione richiesta",model.attentionTitle());
+    try std.testing.expectEqualStrings("Permission requested",model.attentionTitle());
     var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
     const rows=model.visible(arena.allocator());
     try std.testing.expectEqual(@as(usize,6),rows.len);
     try std.testing.expect(rows[0].header and rows[0].group==.attention);
-    try std.testing.expectEqualStrings("Da controllare · 1",rows[0].heading);
+    try std.testing.expectEqualStrings("Needs attention · 1",rows[0].heading);
     try std.testing.expectEqualStrings("blocked",rows[1].id);
     try std.testing.expect(rows[1].attention and rows[1].selected);
     try std.testing.expectEqualStrings("live",rows[3].id);
@@ -418,18 +418,18 @@ test "sections put attention first, keep the archive separate and select what ne
     try std.testing.expectEqualStrings("closed",model.selectedId());
 }
 
-test "timestamps render as compact relative Italian times" {
+test "timestamps render as compact relative times" {
     var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
     const a=arena.allocator();
     const base=main.parseTimestamp("2026-10-19T07:14:26.881Z").?;
     try std.testing.expectEqual(@as(i64,1792394066),base);
-    try std.testing.expectEqualStrings("adesso",main.relativeTime(a,base+10,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("now",main.relativeTime(a,base+10,"2026-10-19T07:14:26.881Z"));
     try std.testing.expectEqualStrings("5 min",main.relativeTime(a,base+300,"2026-10-19T07:14:26.881Z"));
     try std.testing.expectEqualStrings("3 h",main.relativeTime(a,base+3*3600+5,"2026-10-19T07:14:26.881Z"));
-    try std.testing.expectEqualStrings("ieri",main.relativeTime(a,base+30*3600,"2026-10-19T07:14:26.881Z"));
-    try std.testing.expectEqualStrings("4 g",main.relativeTime(a,base+4*86400,"2026-10-19T07:14:26.881Z"));
-    try std.testing.expectEqualStrings("19 ott",main.relativeTime(a,base+30*86400,"2026-10-19T07:14:26.881Z"));
-    try std.testing.expectEqualStrings("29 feb",main.relativeTime(a,base,"2024-02-29T23:59:59Z"));
+    try std.testing.expectEqualStrings("yesterday",main.relativeTime(a,base+30*3600,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("4 d",main.relativeTime(a,base+4*86400,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("19 Oct",main.relativeTime(a,base+30*86400,"2026-10-19T07:14:26.881Z"));
+    try std.testing.expectEqualStrings("29 Feb",main.relativeTime(a,base,"2024-02-29T23:59:59Z"));
     try std.testing.expectEqualStrings("",main.relativeTime(a,0,"2026-10-19T07:14:26.881Z"));
     try std.testing.expectEqualStrings("",main.relativeTime(a,base,"garbage"));
     try std.testing.expect(main.parseTimestamp(null)==null);
@@ -451,7 +451,7 @@ test "failures persist until dismissed while confirmations expire" {
     main.update(&model,.take_control,&fx);
     completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited,.output="{\"ok\":false,\"error\":{\"code\":\"CONTROL_DENIED\",\"message\":\"denied\"}}"}});
     try std.testing.expect(model.showFailure() and !model.showNotice());
-    try std.testing.expect(std.mem.startsWith(u8,model.notice(),"Grok ha il controllo"));
+    try std.testing.expect(std.mem.startsWith(u8,model.notice(),"Grok has control"));
     main.update(&model,.{.notice_expired=.{.key=2}},&fx);
     try std.testing.expect(model.showFailure());
     main.update(&model,.dismiss_notice,&fx);
@@ -493,7 +493,7 @@ test "system appearance and window chrome changes re-theme and re-layout live" {
     var model:main.Model=.{};defer model.deinit();
     var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
     // Before the first snapshot the sidebar must not claim the registry is empty.
-    try std.testing.expect(std.mem.startsWith(u8,model.emptyTitle(),"Caricamento"));
+    try std.testing.expect(std.mem.startsWith(u8,model.emptyTitle(),"Loading"));
     const light=main.tokens(&model);
     main.update(&model,.{.appearance=.{.color_scheme=.dark}},&fx);
     const dark=main.tokens(&model);

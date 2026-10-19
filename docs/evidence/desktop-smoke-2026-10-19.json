@@ -1,47 +1,47 @@
 {
   "schema": 1,
   "status": "passed",
-  "startedAt": "2026-10-19T07:39:01.496Z",
+  "startedAt": "2026-10-19T08:02:05.703Z",
   "checks": [
     {
       "name": "Running UI is connected to the dedicated 25-session registry",
       "passed": true,
-      "at": "2026-10-19T07:39:03.133Z"
+      "at": "2026-10-19T08:02:06.848Z"
     },
     {
       "name": "Both pages expose all 25 exact names and correct disabled navigation",
       "passed": true,
-      "at": "2026-10-19T07:39:03.369Z"
+      "at": "2026-10-19T08:02:07.085Z"
     },
     {
       "name": "Search selects the exact Grok-owned session; resume is disabled",
       "passed": true,
-      "at": "2026-10-19T07:39:03.801Z"
+      "at": "2026-10-19T08:02:07.519Z"
     },
     {
       "name": "Form validation and an empty prompt launch the fake CLI and display its response",
       "passed": true,
-      "at": "2026-10-19T07:39:06.340Z"
+      "at": "2026-10-19T08:02:09.904Z"
     },
     {
       "name": "UI rename is persisted on the same session ID",
       "passed": true,
-      "at": "2026-10-19T07:39:07.234Z"
+      "at": "2026-10-19T08:02:10.809Z"
     },
     {
       "name": "UI closes the fake CLI normally and preserves its native conversation",
       "passed": true,
-      "at": "2026-10-19T07:39:08.257Z"
+      "at": "2026-10-19T08:02:11.837Z"
     },
     {
       "name": "UI archive and restore preserve identity and available actions",
       "passed": true,
-      "at": "2026-10-19T07:39:11.145Z"
+      "at": "2026-10-19T08:02:14.608Z"
     },
     {
       "name": "All 26 sessions are stopped; exactly one fake provider ran, and no seeded metadata started",
       "passed": true,
-      "at": "2026-10-19T07:39:11.175Z"
+      "at": "2026-10-19T08:02:14.638Z"
     }
   ],
   "realProviderLaunches": 0,
@@ -61,5 +61,5 @@
     "06-restored.png"
   ],
   "sessionCount": 26,
-  "finishedAt": "2026-10-19T07:39:11.175Z"
+  "finishedAt": "2026-10-19T08:02:14.638Z"
 }

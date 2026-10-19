@@ -43,7 +43,7 @@ pub const Group = enum { attention, active, closed, archived };
 pub const NoticeKind = enum { info, success, failure };
 pub const Session = struct {
     id: []const u8,
-    title: []const u8 = "Sessione",
+    title: []const u8 = "Session",
     provider: []const u8 = "codex",
     project: []const u8 = "",
     workingDirectory: ?[]const u8 = null,
@@ -71,15 +71,15 @@ pub const Session = struct {
         return if (s.alive) .active else .closed;
     }
     pub fn statusName(s: *const Session) []const u8 {
-        if (s.isArchived()) return "Archiviata";
-        if (s.failed()) return "Errore";
-        if (!s.alive) return "Chiusa";
-        if (s.needsAttention()) return "Da controllare";
-        if (s.closing) return "Chiusura";
-        if (s.starting()) return "Avvio";
-        return if (s.working()) "Al lavoro" else "Pronta";
+        if (s.isArchived()) return "Archived";
+        if (s.failed()) return "Error";
+        if (!s.alive) return "Closed";
+        if (s.needsAttention()) return "Needs attention";
+        if (s.closing) return "Closing";
+        if (s.starting()) return "Starting";
+        return if (s.working()) "Working" else "Ready";
     }
-    pub fn ownerName(s: *const Session) []const u8 { return if (eq(s.owner, "human")) "Tu" else "Grok"; }
+    pub fn ownerName(s: *const Session) []const u8 { return if (eq(s.owner, "human")) "You" else "Grok"; }
     pub fn path(s: *const Session) []const u8 { return s.workingDirectory orelse s.project; }
 };
 const Snapshot = struct { sessions: []const Session };
@@ -197,7 +197,7 @@ pub const Model = struct {
     pub fn loading(m: *const Model) bool { return m.snapshot == null; }
     /// The welcome screen is only for an empty registry; a just-created session shows a spinner until listed.
     pub fn showWelcome(m: *const Model) bool { return m.snapshot != null and m.sessions().len == 0; }
-    pub fn placeholderText(m: *const Model) []const u8 { return if (m.snapshot == null) m.connection() else "Apertura della sessione..."; }
+    pub fn placeholderText(m: *const Model) []const u8 { return if (m.snapshot == null) m.connection() else "Opening session..."; }
 
     // Window chrome: the sidebar header carries the traffic lights.
     /// Header controls share the traffic lights' centerline; without lights (fullscreen) the band is 52.
@@ -216,14 +216,14 @@ pub const Model = struct {
     pub fn selFailed(m: *const Model) bool { return if (m.selected()) |s| s.failed() else false; }
     pub fn selWorking(m: *const Model) bool { return if (m.selected()) |s| s.working() else false; }
     pub fn selReady(m: *const Model) bool { return if (m.selected()) |s| s.ready() else false; }
-    pub fn nativeId(m: *const Model) []const u8 { return if (m.selected()) |s| s.nativeSessionId orelse "In attesa del primo turno" else ""; }
+    pub fn nativeId(m: *const Model) []const u8 { return if (m.selected()) |s| s.nativeSessionId orelse "Waiting for the first turn" else ""; }
     pub fn hasNativeId(m: *const Model) bool { return if (m.selected()) |s| s.nativeSessionId != null else false; }
     pub fn selectedId(m: *const Model) []const u8 { return m.selection.text(); }
-    pub fn runLabel(m: *const Model) []const u8 { return if (m.selected()) |s| s.runId orelse "Nessun processo avviato" else ""; }
+    pub fn runLabel(m: *const Model) []const u8 { return if (m.selected()) |s| s.runId orelse "No process started yet" else ""; }
     pub fn pidLabel(m: *const Model, arena: std.mem.Allocator) []const u8 {
         const s = m.selected() orelse return "";
-        if (!s.alive) return "Nessun processo attivo";
-        const pid = s.pid orelse return "In attesa";
+        if (!s.alive) return "No running process";
+        const pid = s.pid orelse return "Waiting";
         return std.fmt.allocPrint(arena, "PID {d}", .{pid}) catch "";
     }
     pub fn createdLabel(m: *const Model, arena: std.mem.Allocator) []const u8 { return if (m.selected()) |s| absoluteTime(arena, s.createdAt) else ""; }
@@ -238,9 +238,9 @@ pub const Model = struct {
     pub fn closedMeta(m: *const Model, arena: std.mem.Allocator) []const u8 {
         const s = m.selected() orelse return "";
         const when = relativeTime(arena, m.now_s, s.updatedAt);
-        const conversation = if (s.nativeSessionId) |id| id[0..@min(8, id.len)] else "non ancora registrata";
-        if (when.len == 0) return std.fmt.allocPrint(arena, "Conversazione {s}", .{conversation}) catch "";
-        return std.fmt.allocPrint(arena, "Ultima attività {s} · Conversazione {s}", .{ when, conversation }) catch "";
+        const conversation = if (s.nativeSessionId) |id| id[0..@min(8, id.len)] else "not recorded yet";
+        if (when.len == 0) return std.fmt.allocPrint(arena, "Conversation {s}", .{conversation}) catch "";
+        return std.fmt.allocPrint(arena, "Last activity: {s} · Conversation {s}", .{ when, conversation }) catch "";
     }
     pub fn alive(m: *const Model) bool { return if (m.selected()) |s| s.alive else false; }
     pub fn human(m: *const Model) bool { return if (m.selected()) |s| eq(s.owner, "human") else false; }
@@ -248,36 +248,36 @@ pub const Model = struct {
     pub fn pending(m: *const Model) bool { return if (m.selected()) |s| s.pending else false; }
     pub fn archived(m: *const Model) bool { return if (m.selected()) |s| s.isArchived() else false; }
     pub fn attention(m: *const Model) bool { return if (m.selected()) |s| s.needsAttention() else false; }
-    pub fn controlLabel(m: *const Model) []const u8 { return if (m.human()) "Hai il controllo" else "Controllo a Grok"; }
+    pub fn controlLabel(m: *const Model) []const u8 { return if (m.human()) "You have control" else "Grok has control"; }
     pub fn controlHint(m: *const Model) []const u8 {
-        if (m.human() and m.pending()) return "Concludi la richiesta nel terminale prima di passare il controllo o chiudere la CLI.";
-        return if (m.human()) "Scrivi direttamente nel terminale. Grok attende." else "Stai osservando. Prendi il controllo per intervenire.";
+        if (m.human() and m.pending()) return "Finish the request in the terminal before handing over control or closing the CLI.";
+        return if (m.human()) "Type directly in the terminal. Grok is waiting." else "You're observing. Take control to step in.";
     }
     pub fn showControlHint(m: *const Model) bool { return m.alive() and m.human() and m.pending() and !m.attention(); }
     pub fn showGrokBanner(m: *const Model) bool { return m.alive() and m.grok() and !m.attention(); }
     pub fn attentionTitle(m: *const Model) []const u8 {
         const s = m.selected() orelse return "";
-        if (s.failed()) return "La sessione ha un errore";
-        const code = s.@"error" orelse return "Serve la tua attenzione";
-        if (eq(code, "PERMISSION_REQUIRED")) return "Autorizzazione richiesta";
-        if (eq(code, "CLI_ATTENTION_REQUIRED")) return "La CLI attende una risposta";
-        if (eq(code, "HOOKS_NOT_READY")) return "Osservazione non ancora attiva";
-        if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "Compito non ancora accettato";
-        if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "Consegna incerta";
-        if (std.mem.startsWith(u8, code, "HOOK_")) return "Eventi della CLI incompleti";
-        if (eq(code, "STOPFAILURE") or eq(code, "INTERRUPT")) return "Turno interrotto";
-        return "Serve la tua attenzione";
+        if (s.failed()) return "The session has an error";
+        const code = s.@"error" orelse return "Needs your attention";
+        if (eq(code, "PERMISSION_REQUIRED")) return "Permission requested";
+        if (eq(code, "CLI_ATTENTION_REQUIRED")) return "The CLI is waiting for a reply";
+        if (eq(code, "HOOKS_NOT_READY")) return "Observation not active yet";
+        if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "Task not accepted yet";
+        if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "Delivery uncertain";
+        if (std.mem.startsWith(u8, code, "HOOK_")) return "CLI events incomplete";
+        if (eq(code, "STOPFAILURE") or eq(code, "INTERRUPT")) return "Turn interrupted";
+        return "Needs your attention";
     }
     pub fn attentionHint(m: *const Model) []const u8 {
         const code = m.errorCode();
-        if (eq(code, "PERMISSION_REQUIRED")) return if (m.human()) "L'agente chiede di usare uno strumento. Rispondi nel terminale: Harbor non approva nulla al posto tuo." else "L'agente chiede di usare uno strumento. Prendi il controllo e rispondi nel terminale: Harbor non approva nulla al posto tuo.";
-        if (eq(code, "HOOKS_NOT_READY")) return "La CLI non ha confermato l'osservazione di Harbor. Controlla nel terminale eventuali richieste di fiducia per il progetto.";
-        if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "Il compito è stato inviato ma la CLI non l'ha ancora accettato. Controlla il terminale prima di riprovare.";
-        if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "Non è certo che il compito sia arrivato. Controlla il terminale: Harbor non lo reinvia automaticamente.";
-        return if (m.human()) "Verifica la richiesta nel terminale. Nessuna autorizzazione viene confermata automaticamente." else "L'agente richiede attenzione. Prendi il controllo e verifica il terminale; nessuna autorizzazione viene confermata automaticamente.";
+        if (eq(code, "PERMISSION_REQUIRED")) return if (m.human()) "The agent is asking to use a tool. Answer in the terminal: Harbor never approves anything for you." else "The agent is asking to use a tool. Take control and answer in the terminal: Harbor never approves anything for you.";
+        if (eq(code, "HOOKS_NOT_READY")) return "The CLI has not confirmed Harbor's observation. Check the terminal for a project trust prompt.";
+        if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "The task was sent but the CLI has not accepted it yet. Check the terminal before retrying.";
+        if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "It is not certain the task arrived. Check the terminal: Harbor does not resend it automatically.";
+        return if (m.human()) "Check the request in the terminal. No permission is ever approved automatically." else "The agent needs attention. Take control and check the terminal; no permission is ever approved automatically.";
     }
-    pub fn humanSegment(m: *const Model) []const u8 { return if (m.human()) "Hai il controllo" else "Assegna il controllo a te"; }
-    pub fn grokSegment(m: *const Model) []const u8 { return if (m.human()) "Passa il controllo a Grok" else "Grok ha il controllo"; }
+    pub fn humanSegment(m: *const Model) []const u8 { return if (m.human()) "You have control" else "Take control yourself"; }
+    pub fn grokSegment(m: *const Model) []const u8 { return if (m.human()) "Hand control to Grok" else "Grok has control"; }
     pub fn showControl(m: *const Model) bool { return m.hasSelection() and !m.archived(); }
     pub fn cannotTake(m: *const Model) bool { return m.busy or !m.hasSelection(); }
     pub fn cannotRelease(m: *const Model) bool { return m.busy or m.pending() or !m.human(); }
@@ -293,7 +293,7 @@ pub const Model = struct {
     pub fn showFailure(m: *const Model) bool { return m.notice_kind == .failure and !m.notice_buffer.isEmpty(); }
     pub fn showNotice(m: *const Model) bool { return m.notice_kind != .failure and !m.notice_buffer.isEmpty(); }
     pub fn noticeSuccess(m: *const Model) bool { return m.notice_kind == .success; }
-    pub fn connection(m: *const Model) []const u8 { return if (m.connected) "Gestore connesso" else "Connessione al gestore..."; }
+    pub fn connection(m: *const Model) []const u8 { return if (m.connected) "Controller connected" else "Connecting to controller..."; }
 
     // Sidebar list.
     pub fn searchText(m: *const Model) []const u8 { return m.search_buffer.text(); }
@@ -363,23 +363,23 @@ pub const Model = struct {
         };
     }
     pub fn emptyTitle(m: *const Model) []const u8 {
-        if (m.snapshot == null) return "Caricamento delle sessioni...";
-        if (m.searching()) return "Nessun risultato";
-        return if (m.filter == .archived) "Archivio vuoto" else "Nessuna sessione";
+        if (m.snapshot == null) return "Loading sessions...";
+        if (m.searching()) return "No results";
+        return if (m.filter == .archived) "Archive is empty" else "No sessions";
     }
     pub fn emptyHint(m: *const Model) []const u8 {
-        if (m.snapshot == null) return "Le CLI restano attive anche mentre Harbor si collega al gestore.";
-        if (m.searching()) return "Cerca per nome, progetto, agente o Grok.";
-        return if (m.filter == .archived) "Le sessioni chiuse che archivi compaiono qui." else "Crea una sessione con Claude Code o Codex.";
+        if (m.snapshot == null) return "CLIs keep running while Harbor connects to its controller.";
+        if (m.searching()) return "Search by name, project, agent or Grok.";
+        return if (m.filter == .archived) "Closed sessions you archive appear here." else "Create a session with Claude Code or Codex.";
     }
     pub fn pageCount(m: *const Model) usize { return @max(1, (m.filteredCount() + page_size - 1) / page_size); }
     pub fn showPager(m: *const Model) bool { return m.pageCount() > 1; }
-    pub fn pageLabel(m: *const Model, arena: std.mem.Allocator) []const u8 { return std.fmt.allocPrint(arena, "Pagina {d} di {d}", .{ m.page + 1, m.pageCount() }) catch ""; }
+    pub fn pageLabel(m: *const Model, arena: std.mem.Allocator) []const u8 { return std.fmt.allocPrint(arena, "Page {d} of {d}", .{ m.page + 1, m.pageCount() }) catch ""; }
     pub fn listSummary(m: *const Model, arena: std.mem.Allocator) []const u8 {
         if (m.snapshot == null) return "";
         const n = m.matchCount();
-        if (m.searching()) return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "risultato" else "risultati" }) catch "";
-        return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "sessione" else "sessioni" }) catch "";
+        if (m.searching()) return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "result" else "results" }) catch "";
+        return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "session" else "sessions" }) catch "";
     }
     pub fn firstPage(m: *const Model) bool { return m.page == 0; }
     pub fn lastPage(m: *const Model) bool { return (m.page + 1) * page_size >= m.filteredCount(); }
@@ -403,8 +403,8 @@ pub const Model = struct {
     }
     pub fn titlePlaceholder(m: *const Model, arena: std.mem.Allocator) []const u8 {
         const name = std.fs.path.basename(std.mem.trimEnd(u8, m.formProject(), "/"));
-        if (name.len == 0) return "Es. Revisione del checkout";
-        return std.fmt.allocPrint(arena, "Predefinito: {s}", .{name}) catch "Es. Revisione del checkout";
+        if (name.len == 0) return "e.g. Checkout review";
+        return std.fmt.allocPrint(arena, "Default: {s}", .{name}) catch "e.g. Checkout review";
     }
     pub fn recentProjects(m: *const Model, arena: std.mem.Allocator) []const ProjectChip {
         const out = arena.alloc(ProjectChip, 4) catch return &.{};
@@ -430,7 +430,7 @@ const HarborApp = sdk.UiApp(Model, Msg);
 fn eq(a: []const u8, b: []const u8) bool { return std.mem.eql(u8, a, b); }
 fn contains(a: []const u8, b: []const u8) bool { if (b.len > a.len) return false; for (0..a.len - b.len + 1) |i| { if (std.ascii.eqlIgnoreCase(a[i .. i + b.len], b)) return true; } return false; }
 fn groupName(g: Group) []const u8 {
-    return switch (g) { .attention => "Da controllare", .active => "Attive", .closed => "Chiuse", .archived => "Archiviate" };
+    return switch (g) { .attention => "Needs attention", .active => "Active", .closed => "Closed", .archived => "Archived" };
 }
 fn displayPath(arena: std.mem.Allocator, value: []const u8) []const u8 {
     if (home_directory.len > 1 and std.mem.startsWith(u8, value, home_directory) and (value.len == home_directory.len or value[home_directory.len] == '/'))
@@ -458,16 +458,16 @@ pub fn parseTimestamp(value: ?[]const u8) ?i64 {
     const days = era * 146097 + doe - 719468;
     return days * 86400 + hour * 3600 + minute * 60 + second;
 }
-const month_names = [_][]const u8{ "gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic" };
+const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 pub fn relativeTime(arena: std.mem.Allocator, now: i64, value: ?[]const u8) []const u8 {
     const then = parseTimestamp(value) orelse return "";
     if (now <= 0) return "";
     const delta = @max(0, now - then);
-    if (delta < 45) return "adesso";
+    if (delta < 45) return "now";
     if (delta < 3600) return std.fmt.allocPrint(arena, "{d} min", .{@max(1, @divFloor(delta + 30, 60))}) catch "";
     if (delta < 86400) return std.fmt.allocPrint(arena, "{d} h", .{@divFloor(delta, 3600)}) catch "";
-    if (delta < 2 * 86400) return "ieri";
-    if (delta < 7 * 86400) return std.fmt.allocPrint(arena, "{d} g", .{@divFloor(delta, 86400)}) catch "";
+    if (delta < 2 * 86400) return "yesterday";
+    if (delta < 7 * 86400) return std.fmt.allocPrint(arena, "{d} d", .{@divFloor(delta, 86400)}) catch "";
     const civil = civilDate(then);
     return std.fmt.allocPrint(arena, "{d} {s}", .{ civil.day, month_names[civil.month - 1] }) catch "";
 }
@@ -483,7 +483,7 @@ fn civilDate(seconds: i64) struct { year: i64, month: usize, day: i64 } {
     return .{ .year = yoe + era * 400 + @as(i64, if (month <= 2) 1 else 0), .month = @intCast(month), .day = day };
 }
 fn absoluteTime(arena: std.mem.Allocator, value: ?[]const u8) []const u8 {
-    const seconds = parseTimestamp(value) orelse return "Non disponibile";
+    const seconds = parseTimestamp(value) orelse return "Not available";
     const civil = civilDate(seconds);
     const in_day = @mod(seconds, 86400);
     return std.fmt.allocPrint(arena, "{d} {s} {d}, {d:0>2}:{d:0>2} UTC", .{ civil.day, month_names[civil.month - 1], civil.year, @as(u64, @intCast(@divFloor(in_day, 3600))), @as(u64, @intCast(@divFloor(@mod(in_day, 3600), 60))) }) catch "";
@@ -496,18 +496,18 @@ fn setNotice(m: *Model, fx: *Effects, kind: NoticeKind, text: []const u8) void {
 fn notice(m: *Model, fx: *Effects, text: []const u8) void { setNotice(m, fx, .info, text); }
 fn failure(m: *Model, fx: *Effects, text: []const u8) void { setNotice(m, fx, .failure, text); }
 fn success(m: *Model, fx: *Effects, text: []const u8) void { setNotice(m, fx, .success, text); }
-/// Translates broker error codes into actionable Italian copy; unknown codes keep the broker message.
+/// Translates broker error codes into actionable copy; unknown codes keep the broker message.
 fn errorCopy(code: []const u8, message: []const u8) []const u8 {
-    if (eq(code, "CONTROL_DENIED")) return "Grok ha il controllo di questa sessione. Prendi il controllo prima di agire.";
-    if (eq(code, "CONTROL_CHANGED")) return "Il controllo è cambiato durante l'operazione. Nessun input è stato inviato: verifica il terminale.";
-    if (eq(code, "CLI_NOT_READY")) return "La CLI non è pronta. Apri il terminale per risolvere fiducia, permessi o hook.";
-    if (eq(code, "REQUEST_UNRESOLVED")) return "Una consegna precedente non ha ricevuta. Controlla il terminale prima di inviare altro.";
-    if (eq(code, "WORKTREE_MISSING")) return "La cartella di lavoro salvata non esiste più. Harbor non riprende in un'altra cartella.";
-    if (eq(code, "DEPENDENCY_MISSING")) return "Manca una dipendenza (tmux o la CLI dell'agente). Esegui harbor doctor per i dettagli.";
-    if (eq(code, "INVALID_PROJECT")) return "La cartella del progetto non esiste o non è una directory.";
+    if (eq(code, "CONTROL_DENIED")) return "Grok has control of this session. Take control before acting.";
+    if (eq(code, "CONTROL_CHANGED")) return "Control changed during the operation. No input was sent: check the terminal.";
+    if (eq(code, "CLI_NOT_READY")) return "The CLI is not ready. Open the terminal to resolve trust, permissions or hooks.";
+    if (eq(code, "REQUEST_UNRESOLVED")) return "A previous delivery has no receipt. Check the terminal before sending more.";
+    if (eq(code, "WORKTREE_MISSING")) return "The saved working directory no longer exists. Harbor does not resume in a different folder.";
+    if (eq(code, "DEPENDENCY_MISSING")) return "A dependency is missing (tmux or the agent's CLI). Run harbor doctor for details.";
+    if (eq(code, "INVALID_PROJECT")) return "The project folder does not exist or is not a directory.";
     if (eq(code, "INVALID_CLI_ARGS") or eq(code, "RESERVED_CLI_ARGUMENT")) return message;
-    if (eq(code, "DAEMON_UNAVAILABLE") or eq(code, "RPC_TIMEOUT")) return "Il gestore non risponde. Le CLI restano attive; riprova tra poco.";
-    if (eq(code, "CLIENT_CONTROL_FAILED")) return "Il terminale non ha confermato il cambio di controllo. Il controllo precedente resta valido.";
+    if (eq(code, "DAEMON_UNAVAILABLE") or eq(code, "RPC_TIMEOUT")) return "The controller is not responding. CLIs keep running; try again shortly.";
+    if (eq(code, "CLIENT_CONTROL_FAILED")) return "The terminal did not confirm the control change. The previous control still applies.";
     return message;
 }
 fn clearCreateIntent(m: *Model) void { m.create_id.clear(); m.create_file_path.clear(); m.create_intent_valid = false; }
@@ -534,19 +534,19 @@ fn createIntent(m: *Model, args_json: []const u8, prompt: []const u8) void {
 fn run(m: *Model, fx: *Effects, args: []const []const u8) void {
     if (m.busy) return;
     var bytes = node_path.len + cli_path.len; for (args) |arg| bytes += arg.len;
-    if (args.len + 2 > sdk.max_effect_argv or bytes > sdk.max_effect_argv_bytes) { failure(m, fx, "I percorsi dell'app superano il limite del terminale. Usa una posizione più breve."); return; }
+    if (args.len + 2 > sdk.max_effect_argv or bytes > sdk.max_effect_argv_bytes) { failure(m, fx, "The app's paths exceed the terminal limit. Use a shorter location."); return; }
     m.busy = true; m.operation_session.set(m.selectedId());
     var argv: [20][]const u8 = undefined; argv[0] = node_path; argv[1] = cli_path;
     for (args, 0..) |arg, i| argv[i + 2] = arg;
     fx.spawn(.{ .key = 101, .argv = argv[0 .. args.len + 2], .output = .collect, .on_exit = Effects.exitMsg(.command_done) });
 }
 fn writeCreateRequest(m: *Model, fx: *Effects, cli_args: []const []const u8, prompt: []const u8) void {
-    const path = std.fmt.allocPrint(alloc, "{s}/{s}.json", .{ request_directory, m.create_id.text() }) catch { failure(m, fx, "Impossibile preparare la richiesta."); return; };
+    const path = std.fmt.allocPrint(alloc, "{s}/{s}.json", .{ request_directory, m.create_id.text() }) catch { failure(m, fx, "Could not prepare the request."); return; };
     defer alloc.free(path);
     m.create_file_path.set(path);
-    if (m.create_file_path.truncated) { failure(m, fx, "Il percorso dei dati dell'app è troppo lungo."); return; }
+    if (m.create_file_path.truncated) { failure(m, fx, "The app's data path is too long."); return; }
     var json: std.Io.Writer.Allocating = .init(alloc); defer json.deinit();
-    std.json.Stringify.value(.{ .id = m.create_id.text(), .requestId = m.create_id.text(), .provider = if (m.form_claude) "claude" else "codex", .project = m.formProject(), .title = m.effectiveTitle(), .owner = "human", .text = prompt, .cliArgs = cli_args }, .{}, &json.writer) catch { failure(m, fx, "Impossibile preparare la richiesta."); return; };
+    std.json.Stringify.value(.{ .id = m.create_id.text(), .requestId = m.create_id.text(), .provider = if (m.form_claude) "claude" else "codex", .project = m.formProject(), .title = m.effectiveTitle(), .owner = "human", .text = prompt, .cliArgs = cli_args }, .{}, &json.writer) catch { failure(m, fx, "Could not prepare the request."); return; };
     m.busy = true;
     fx.writeFile(.{ .key = 108, .path = m.create_file_path.text(), .bytes = json.written(), .on_result = Effects.fileMsg(.create_file_saved) });
 }
@@ -698,23 +698,23 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .pick_project => |p| m.project_buffer.set(p),
         .choose_provider => |p| m.form_claude = eq(p, "claude"),
         .choose_folder => { fx.spawn(.{ .key = 105, .argv = &.{ node_path, gui_path, "folder" }, .output = .collect, .on_exit = Effects.exitMsg(.folder_done) }); },
-        .folder_done => |r| { if (r.code == 0 and r.reason == .exited) { const p = std.mem.trim(u8, r.output, "\r\n"); if (p.len > 0) m.project_buffer.set(p); } else notice(m, fx, "Selezione cartella annullata o non disponibile."); },
+        .folder_done => |r| { if (r.code == 0 and r.reason == .exited) { const p = std.mem.trim(u8, r.output, "\r\n"); if (p.len > 0) m.project_buffer.set(p); } else notice(m, fx, "Folder selection cancelled or unavailable."); },
         .create_session => {
             if (m.cannotCreate()) return;
             const cli_args = std.mem.trim(u8, m.formCliArgs(), " \t\r\n");
             const args_json = if (cli_args.len == 0) "[]" else cli_args;
-            const checked = std.json.parseFromSlice([]const []const u8, alloc, args_json, .{}) catch { failure(m, fx, "Le opzioni devono essere un array JSON di stringhe, per esempio [\"--model\",\"nome-modello\"]."); return; };
+            const checked = std.json.parseFromSlice([]const []const u8, alloc, args_json, .{}) catch { failure(m, fx, "Options must be a JSON array of strings, for example [\"--model\",\"model-name\"]."); return; };
             defer checked.deinit();
-            const prompt = if (m.prompt_buffer.isEmpty()) "Rispondi soltanto PRONTO. Non usare strumenti e non modificare file." else m.formPrompt();
+            const prompt = if (m.prompt_buffer.isEmpty()) "Reply only READY. Do not use tools and do not modify files." else m.formPrompt();
             createIntent(m, args_json, prompt);
-            m.action = .create; notice(m, fx, "Creazione della sessione...");
+            m.action = .create; notice(m, fx, "Creating session...");
             writeCreateRequest(m, fx, checked.value, prompt);
         },
-        .create_file_saved => |r| { m.busy = false; if (r.outcome == .ok) { run(m, fx, &.{ "create", "--request-file", m.create_file_path.text() }); } else failure(m, fx, "La richiesta non è stata salvata. Riprova per continuare la stessa creazione."); },
+        .create_file_saved => |r| { m.busy = false; if (r.outcome == .ok) { run(m, fx, &.{ "create", "--request-file", m.create_file_path.text() }); } else failure(m, fx, "The request was not saved. Retry to continue the same creation."); },
         .take_control => { if (!m.hasSelection() or m.busy or m.human()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "human" }); },
         .release_control => { if (!m.hasSelection() or m.cannotRelease()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "grok" }); },
-        .start_session => { if (!m.hasSelection() or !m.canStart() or m.cannotStart()) return; m.action = .start; notice(m, fx, "Ripresa della conversazione..."); run(m, fx, &.{ "start", m.selectedId(), "--actor", "human" }); },
-        .stop_session => { if (m.cannotStop()) return; m.action = .stop; notice(m, fx, "Chiusura della CLI. La conversazione rimane salvata."); run(m, fx, &.{ "stop", m.selectedId(), "--actor", "human" }); },
+        .start_session => { if (!m.hasSelection() or !m.canStart() or m.cannotStart()) return; m.action = .start; notice(m, fx, "Resuming the conversation..."); run(m, fx, &.{ "start", m.selectedId(), "--actor", "human" }); },
+        .stop_session => { if (m.cannotStop()) return; m.action = .stop; notice(m, fx, "Closing the CLI. The conversation stays saved."); run(m, fx, &.{ "stop", m.selectedId(), "--actor", "human" }); },
         .archive_session => { if (!m.hasSelection() or m.alive() or m.archived() or m.busy) return; m.action = .archive; run(m, fx, &.{ "archive", m.selectedId() }); },
         .restore_session => { if (!m.archived() or m.busy) return; m.action = .restore; run(m, fx, &.{ "restore", m.selectedId() }); },
         .rename_session => { if (m.selected()) |s| { m.rename_buffer.set(s.title); m.renaming = true; } },
@@ -726,7 +726,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .open_terminal => { if (!m.hasSelection() or m.busy) return; m.action = .external; run(m, fx, &.{ "control", m.selectedId(), "human" }); },
         .copy_id => { if (m.hasNativeId()) fx.writeClipboard(.{ .key = 106, .text = m.nativeId(), .on_result = Effects.clipboardMsg(.copied) }); },
         .copy_session_id => { if (m.hasSelection()) fx.writeClipboard(.{ .key = 106, .text = m.selectedId(), .on_result = Effects.clipboardMsg(.copied) }); },
-        .copied => |r| { if (r.outcome == .ok) success(m, fx, "Identificativo copiato.") else failure(m, fx, "Impossibile copiare l'identificativo."); },
+        .copied => |r| { if (r.outcome == .ok) success(m, fx, "Identifier copied.") else failure(m, fx, "Could not copy the identifier."); },
         .dismiss_notice => { m.notice_buffer.clear(); fx.cancelTimer(2); },
         .notice_expired => |t| { if (t.outcome == .fired and m.notice_kind != .failure) m.notice_buffer.clear(); },
         .row_rename => |id| rowAction(m, fx, id, .rename_session),
@@ -745,32 +745,32 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
             m.busy = false;
             if (r.reason != .exited or r.code != 0 or r.output_truncated) {
                 const parsed = std.json.parseFromSlice(struct { @"error": struct { code: []const u8 = "", message: []const u8 } }, alloc, r.output, .{ .ignore_unknown_fields = true }) catch null;
-                if (parsed) |f| { defer f.deinit(); failure(m, fx, errorCopy(f.value.@"error".code, f.value.@"error".message)); } else failure(m, fx, if (r.stderr_tail.len > 0) r.stderr_tail else "Operazione non completata. Verifica il terminale prima di riprovare.");
+                if (parsed) |f| { defer f.deinit(); failure(m, fx, errorCopy(f.value.@"error".code, f.value.@"error".message)); } else failure(m, fx, if (r.stderr_tail.len > 0) r.stderr_tail else "Operation not completed. Check the terminal before retrying.");
                 return;
             }
             const parsed = std.json.parseFromSlice(struct { session: ?Session = null }, alloc, r.output, .{ .ignore_unknown_fields = true }) catch null;
             if (parsed) |p| {
                 defer p.deinit();
                 if (m.action == .create) {
-                    const created = p.value.session orelse { failure(m, fx, "Risposta incompleta. Riprova per verificare la stessa creazione."); return; };
+                    const created = p.value.session orelse { failure(m, fx, "Incomplete response. Retry to check the same creation."); return; };
                     m.creating = false; clearCreateIntent(m); m.title_buffer.clear(); m.prompt_buffer.clear(); m.cli_args_buffer.clear();
                     m.filter = .all; m.search_buffer.clear();
                     select(m, fx, created.id);
                     revealSelection(m);
                 }
-            } else if (m.action == .create) { failure(m, fx, "Risposta incompleta. Riprova per verificare la stessa creazione."); return; }
+            } else if (m.action == .create) { failure(m, fx, "Incomplete response. Retry to check the same creation."); return; }
             m.renaming = false;
             if (m.action == .external) { fx.spawn(.{ .key = 107, .argv = &.{ node_path, gui_path, "terminal", m.operation_session.text() }, .output = .collect, .on_exit = Effects.exitMsg(.folder_done) }); }
             success(m, fx, switch (m.action) {
-                .create => "Sessione avviata.",
-                .start => "Sessione ripresa. Il terminale si ricollega.",
-                .control => if (m.human()) "Hai il controllo. Il terminale accetta la tastiera." else "Controllo passato a Grok. Il terminale è in sola lettura.",
-                .external => "Sessione aperta in Terminale.",
-                .stop => "CLI chiusa. La conversazione è salvata.",
-                .archive => "Sessione archiviata.",
-                .restore => "Sessione ripristinata.",
-                .rename => "Nome aggiornato.",
-                .other => "Operazione completata.",
+                .create => "Session started.",
+                .start => "Session resumed. The terminal is reconnecting.",
+                .control => if (m.human()) "You have control. The terminal accepts keyboard input." else "Control handed to Grok. The terminal is read-only.",
+                .external => "Session opened in Terminal.",
+                .stop => "CLI closed. The conversation is saved.",
+                .archive => "Session archived.",
+                .restore => "Session restored.",
+                .rename => "Name updated.",
+                .other => "Operation completed.",
             });
             if (m.action == .control) m.focus_terminal = true;
         },
@@ -788,7 +788,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
             if (m.selected()) |s| { if (s.isArchived() and previous) { if (m.preferred()) |id| m.selection.set(id); } }
             revealSelection(m); syncTerminal(m, fx);
         },
-        .prefs_saved => |r| { if (r.outcome != .ok) failure(m, fx, "La selezione non è stata salvata. Le sessioni restano nel gestore."); },
+        .prefs_saved => |r| { if (r.outcome != .ok) failure(m, fx, "The selection was not saved. Sessions remain in the controller."); },
         .appearance => |a| { m.dark = a.color_scheme == .dark; m.high_contrast = a.high_contrast; },
         .chrome => |c| { m.chrome_left = c.insets.left; m.chrome_top = c.insets.top; m.chrome_center = if (c.buttons.height > 0) c.buttons.y + c.buttons.height / 2 else 0; },
     }

@@ -7,18 +7,18 @@ import { findWidget, parseOptions, parseWidgets, prepareHome } from '../live/des
 
 test('desktop smoke parses Native semantics without losing 64-bit widget IDs or escaped names', () => {
   const snapshot = `ready=true protocol=0x1 publisher_pid=1 dispatch_errors=0
-    widget @w1/main-canvas#18446744073709551615 role=button name="Pagina successiva" bounds=(264,792.75 32x32) focused=false enabled=false state=[disabled]
+    widget @w1/main-canvas#18446744073709551615 role=button name="Next page" bounds=(264,792.75 32x32) focused=false enabled=false state=[disabled]
     widget @w1/main-canvas#9007199254740993 role=listitem name="Smoke \\"quoted\\"" bounds=(14,300 282x80) focused=false enabled=true state=[selected] actions=[press]
-    widget @w1/main-canvas#11843511342448992222 role=textbox name="" bounds=(14,79 282x32) focused=false enabled=true placeholder="Cerca sessione o progetto" actions=[focus,set_text]
-    widget @w1/other-view#12 role=button name="Pagina successiva" bounds=(0,0 10x10) enabled=true
+    widget @w1/main-canvas#11843511342448992222 role=textbox name="" bounds=(14,79 282x32) focused=false enabled=true placeholder="Search sessions or projects" actions=[focus,set_text]
+    widget @w1/other-view#12 role=button name="Next page" bounds=(0,0 10x10) enabled=true
 `;
   const widgets = parseWidgets(snapshot);
   assert.equal(widgets.length, 4);
-  assert.equal(findWidget(snapshot, { role: 'button', name: 'Pagina successiva' }).id, '18446744073709551615');
-  assert.equal(findWidget(snapshot, { role: 'button', name: 'Pagina successiva' }).enabled, false);
+  assert.equal(findWidget(snapshot, { role: 'button', name: 'Next page' }).id, '18446744073709551615');
+  assert.equal(findWidget(snapshot, { role: 'button', name: 'Next page' }).enabled, false);
   assert.equal(findWidget(snapshot, { role: 'listitem', name: 'Smoke "quoted"' }).selected, true);
-  assert.equal(findWidget(snapshot, { role: 'textbox', placeholder: 'Cerca sessione o progetto' }).id, '11843511342448992222');
-  assert.throws(() => findWidget(snapshot + snapshot, { role: 'button', name: 'Pagina successiva' }), /exactly one/);
+  assert.equal(findWidget(snapshot, { role: 'textbox', placeholder: 'Search sessions or projects' }).id, '11843511342448992222');
+  assert.throws(() => findWidget(snapshot + snapshot, { role: 'button', name: 'Next page' }), /exactly one/);
 });
 
 test('desktop smoke requires explicit absolute paths and refuses the personal application home', () => {

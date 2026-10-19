@@ -8,7 +8,7 @@ const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const [action,id] = process.argv.slice(2);
 try {
   if (action === 'folder') {
-    const script = 'POSIX path of (choose folder with prompt "Scegli il progetto per Agent Harbor")';
+    const script = 'POSIX path of (choose folder with prompt "Choose the project for Agent Harbor")';
     process.stdout.write(execFileSync('/usr/bin/osascript',['-e',script],{encoding:'utf8'}));
   } else if (action === 'terminal') {
     if (!/^[a-f0-9-]{36}$/i.test(id || '')) throw new Error('Invalid session identity.');

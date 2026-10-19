@@ -32,7 +32,7 @@ The first claim does not automatically establish the other two. For example, an 
 
 The desktop interface renders the selected original CLI through a terminal attachment. A view-only attachment must not send keys or change the agent's control owner. The user explicitly takes control before typing.
 
-The intended fallback is **Open in Terminal** (Italian UI: **Apri in Terminale**): attach the same tmux session in the user's terminal after transferring control to the human. This must preserve the existing process and native conversation; opening a new Claude or Codex process is not an equivalent fallback.
+The intended fallback is **Open in Terminal**: attach the same tmux session in the user's terminal after transferring control to the human. This must preserve the existing process and native conversation; opening a new Claude or Codex process is not an equivalent fallback.
 
 Use the fallback when an embedded-terminal limitation affects image clipboard input, an input method editor, complex key combinations, external editors or terminal-specific integrations. A fallback does not waive verification: tmux and the chosen external terminal can also affect these capabilities. The UI should explain which session will open, keep ownership visible, and make returning control to Grok explicit. If the CLI is closed, resume the saved conversation first rather than attaching a nonexistent process.
 

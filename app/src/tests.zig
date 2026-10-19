@@ -488,3 +488,32 @@ test "context menu actions target their own row and the form defaults to that se
     main.update(&model,.{.choose_provider="codex"},&fx);
     try std.testing.expect(!model.form_claude);
 }
+
+test "system appearance and window chrome changes re-theme and re-layout live" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    // Before the first snapshot the sidebar must not claim the registry is empty.
+    try std.testing.expect(std.mem.startsWith(u8,model.emptyTitle(),"Caricamento"));
+    const light=main.tokens(&model);
+    main.update(&model,.{.appearance=.{.color_scheme=.dark}},&fx);
+    const dark=main.tokens(&model);
+    try std.testing.expect(model.dark);
+    // The terminal inherits background and text, so both must flip with the scheme.
+    try std.testing.expect(dark.colors.background.r<0.1 and light.colors.background.r>0.9);
+    try std.testing.expect(dark.colors.text.r>0.8 and light.colors.text.r<0.2);
+    main.update(&model,.{.appearance=.{.color_scheme=.dark,.high_contrast=true}},&fx);
+    const contrast=main.tokens(&model);
+    try std.testing.expect(!std.meta.eql(contrast.colors.background,dark.colors.background) or !std.meta.eql(contrast.colors.accent,dark.colors.accent));
+    main.update(&model,.{.appearance=.{.color_scheme=.light}},&fx);
+    try std.testing.expect(std.meta.eql(main.tokens(&model).colors.background,light.colors.background));
+    // Hidden-titlebar insets move the header below the traffic lights; fullscreen reports zero.
+    try std.testing.expectEqual(@as(f32,52),model.headerHeight());
+    main.update(&model,.{.chrome=.{.insets=.{.top=60,.left=78}}},&fx);
+    try std.testing.expectEqual(@as(f32,60),model.headerHeight());
+    // The traffic-light frame is the vertical truth when the band is taller than the lights' row.
+    main.update(&model,.{.chrome=.{.insets=.{.top=66,.left=78},.buttons=sdk.geometry.RectF.init(20,19,52,14)}},&fx);
+    try std.testing.expectEqual(@as(f32,52),model.headerHeight());
+    try std.testing.expectEqual(@as(f32,78),model.chromeLeading());
+    main.update(&model,.{.chrome=.{}},&fx);
+    try std.testing.expectEqual(@as(f32,16),model.chromeLeading());
+}

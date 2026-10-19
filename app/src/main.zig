@@ -188,7 +188,8 @@ pub const Model = struct {
     high_contrast: bool = false,
     chrome_left: f32 = 0,
     chrome_top: f32 = 0,
-    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "pending", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
+    chrome_center: f32 = 0,
+    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "pending", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "chrome_center", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
     pub fn deinit(m: *Model) void { discardPending(m); if (m.snapshot) |p| p.deinit(); m.snapshot = null; }
     pub fn sessions(m: *const Model) []const Session { return if (m.snapshot) |p| p.value.sessions else &.{}; }
     pub fn selected(m: *const Model) ?Session { for (m.sessions()) |s| { if (eq(s.id, m.selection.text())) return s; } return null; }
@@ -199,7 +200,8 @@ pub const Model = struct {
     pub fn placeholderText(m: *const Model) []const u8 { return if (m.snapshot == null) m.connection() else "Apertura della sessione..."; }
 
     // Window chrome: the sidebar header carries the traffic lights.
-    pub fn headerHeight(m: *const Model) f32 { return @max(52, m.chrome_top); }
+    /// Header controls share the traffic lights' centerline; without lights (fullscreen) the band is 52.
+    pub fn headerHeight(m: *const Model) f32 { return if (m.chrome_center > 0) @max(44, m.chrome_center * 2) else @max(52, m.chrome_top); }
     pub fn chromeLeading(m: *const Model) f32 { return if (m.chrome_left > 0) m.chrome_left else 16; }
 
     // Selected session.
@@ -361,10 +363,12 @@ pub const Model = struct {
         };
     }
     pub fn emptyTitle(m: *const Model) []const u8 {
+        if (m.snapshot == null) return "Caricamento delle sessioni...";
         if (m.searching()) return "Nessun risultato";
         return if (m.filter == .archived) "Archivio vuoto" else "Nessuna sessione";
     }
     pub fn emptyHint(m: *const Model) []const u8 {
+        if (m.snapshot == null) return "Le CLI restano attive anche mentre Harbor si collega al gestore.";
         if (m.searching()) return "Cerca per nome, progetto, agente o Grok.";
         return if (m.filter == .archived) "Le sessioni chiuse che archivi compaiono qui." else "Crea una sessione con Claude Code o Codex.";
     }
@@ -372,6 +376,7 @@ pub const Model = struct {
     pub fn showPager(m: *const Model) bool { return m.pageCount() > 1; }
     pub fn pageLabel(m: *const Model, arena: std.mem.Allocator) []const u8 { return std.fmt.allocPrint(arena, "Pagina {d} di {d}", .{ m.page + 1, m.pageCount() }) catch ""; }
     pub fn listSummary(m: *const Model, arena: std.mem.Allocator) []const u8 {
+        if (m.snapshot == null) return "";
         const n = m.matchCount();
         if (m.searching()) return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "risultato" else "risultati" }) catch "";
         return std.fmt.allocPrint(arena, "{d} {s}", .{ n, if (n == 1) "sessione" else "sessioni" }) catch "";
@@ -785,7 +790,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         },
         .prefs_saved => |r| { if (r.outcome != .ok) failure(m, fx, "La selezione non è stata salvata. Le sessioni restano nel gestore."); },
         .appearance => |a| { m.dark = a.color_scheme == .dark; m.high_contrast = a.high_contrast; },
-        .chrome => |c| { m.chrome_left = c.insets.left; m.chrome_top = c.insets.top; },
+        .chrome => |c| { m.chrome_left = c.insets.left; m.chrome_top = c.insets.top; m.chrome_center = if (c.buttons.height > 0) c.buttons.y + c.buttons.height / 2 else 0; },
     }
 }
 /// Calm neutral shell with one green identity hue; the terminal inherits background and text.

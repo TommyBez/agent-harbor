@@ -5,6 +5,11 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const parse = value => { const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim()); return m ? m.slice(1).map(Number) : null; };
 const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+/** The newest vX.Y.Z tag, ignoring anything that is not a plain release version. */
+export function latestTag(tags) {
+  const latest = tags.filter(tag => /^v\d+\.\d+\.\d+$/.test(tag.trim())).sort((a, b) => compare(parse(a), parse(b))).at(-1);
+  return latest?.trim() || null;
+}
 export function nextVersion(floor, tags, bump) {
   const base = parse(floor);
   if (!base) throw new Error(`Invalid source version ${floor}.`);

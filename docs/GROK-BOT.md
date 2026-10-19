@@ -37,13 +37,13 @@ HARBOR_CLI="$HARBOR_APP/Contents/Resources/harbor/bin/harbor.mjs"
 
 Keep the app installed at that location while its daemon and hooks are in use. tmux and the authenticated provider CLIs remain external prerequisites. A source CLI and bundle CLI can share state, but the first client starts the daemon from its own installation; do not mix incompatible releases against one state directory. Stop agents normally and follow a documented upgrade procedure before replacing resources used by live sessions.
 
-Complete normal project and hook trust in the chosen installation before expecting unattended bot startup. Codex may request hook review again when the observer command changes, including a move from a source checkout to the packaged app. Harbor reports missing observations and never approves that dialog itself. If a turn ran while hooks were untrusted, inspect the terminal rather than replaying it blindly; after approving the intended hooks, exit normally and resume with a new request ID for a new task. The packaged Codex resume was verified after this one-time setup.
+Folder trust and Codex hook review need a human decision once per folder (hook review again when the observer command changes, including a move from a source checkout to the packaged app). The human answers them with one click in Harbor, without taking control, or pre-authorizes the folder that holds their projects so Harbor answers them itself. The bot never answers them. See [workspace trust](WORKSPACE-TRUST.md). If a turn ran while hooks were untrusted, inspect the terminal rather than replaying it blindly; after approving the intended hooks, exit normally and resume with a new request ID for a new task. The packaged Codex resume was verified after this one-time setup.
 
 Shell variables and functions may not survive between separate Grok tool calls. Either supply the resolved paths in every invocation or define them in each script. Quote paths and pass arguments as an array when the tool supports it. Never interpolate a task's text or project path into an unquoted shell command.
 
 ## Bot instruction to copy
 
-Replace the two path placeholders and the project placeholder before adding this instruction to your bot. The project must be explicitly authorized by its owner. This instruction makes Grok a controller; it does not give it permission to accept new CLI trust or tool-approval prompts.
+Replace the two path placeholders and the project placeholder before adding this instruction to your bot. The project must be explicitly authorized by its owner. This instruction makes Grok a controller; it does not give it permission to answer trust or tool-approval prompts, or to change trusted folders.
 
 ```text
 Use Agent Harbor to delegate local coding work to interactive Codex or Claude Code sessions.
@@ -69,7 +69,7 @@ If control belongs to the human, stop submitting input. Do not claim --actor hum
 
 If a command times out or disconnects, inspect result using the same request ID. Do not assume that the task was not delivered. For uncertain delivery, preserve all IDs and ask the human to inspect the existing terminal; never resend with a new ID to get around the condition. For a request-ID conflict, correct your local bookkeeping instead of launching another task.
 
-If Harbor reports attention, missing hook trust, login, permissions or an unavailable native identity, tell the user which session needs attention in the desktop app. Do not approve, bypass, type Enter into an unknown prompt, edit global settings or force-kill the CLI. After the user resolves the issue, recheck the existing request and session rather than creating a replacement.
+If Harbor reports TRUST_REQUIRED or HOOK_TRUST_REQUIRED, tell the user once that the session needs them to trust the folder or hooks in Agent Harbor, then wait with the same request ID and --through-attention: the task continues on its own after they click. Never run harbor trust or harbor trusted-folders. If Harbor reports other attention, login, permissions or an unavailable native identity, tell the user which session needs attention in the desktop app. Do not approve, bypass, type Enter into an unknown prompt, edit global settings or force-kill the CLI. After the user resolves the issue, recheck the existing request and session rather than creating a replacement.
 
 Use only the user's authorized project and scope. Do not archive sessions or remove files unless the user asks. Never publish runtime transcripts, credentials, native IDs or private project paths as debugging evidence.
 ```
@@ -138,7 +138,9 @@ An older controller is rejected with `DAEMON_UPGRADE_REQUIRED` before a client s
 | `CONTROL_DENIED` or `CONTROL_CHANGED` | Human ownership or a changed control epoch | Stop writing and let the human resolve ownership/draft |
 | `TURN_PENDING`, `SESSION_CLOSING` | Current interaction has not reached a ready boundary | Wait or inspect the same operation |
 | `REQUEST_UNRESOLVED` | A previous delivery in this process still has no confirmed receipt | Inspect that receipt and terminal; a new task is blocked to prevent ambiguous attribution |
-| `CLI_NOT_READY`, attention state, `HOOKS_NOT_READY` | Trust, hooks, permission or other observed readiness problem | Direct the user to the existing terminal |
+| `TRUST_REQUIRED`, `HOOK_TRUST_REQUIRED` | The CLI waits for folder trust or Codex hook review | Ask the user to click Trust in Harbor; `wait --through-attention` on the same request ID |
+| `TRUST_DECLINED` | The human declined; no conversation was created | Report it; start again only if the user asks |
+| `CLI_NOT_READY`, attention state, `HOOKS_NOT_READY` | Unrecognized dialog, hooks, permission or other observed readiness problem | Direct the user to the existing terminal |
 | `REQUEST_ID_CONFLICT`, `SESSION_ID_CONFLICT` | A retained identity was reused for different input | Correct bookkeeping; do not create duplicates to hide the error |
 | `SESSION_ID_UNVERIFIED`, `WORKTREE_MISSING` | Exact recovery cannot safely proceed | Preserve the session and request human repair |
 | `STOP_TIMEOUT` | Normal exit was not confirmed; Harbor did not force-kill | Inspect the terminal; never report the CLI as closed |

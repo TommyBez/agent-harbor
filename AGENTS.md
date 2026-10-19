@@ -14,7 +14,7 @@ These are official upstream skills pinned to the SDK release; do not rewrite the
 
 ## Product invariants
 
-- Run the original interactive CLIs. Preserve user configuration and normal permission/trust checks.
+- Run the original interactive CLIs. Preserve user configuration and normal permission checks. Workspace trust (folder trust and Codex hook review) is answered only in the CLI's own dialog: by the human from Harbor, or automatically for folders the human pre-authorized. Tool permissions are never answered. See `docs/WORKSPACE-TRUST.md`.
 - Session UUID, native conversation ID, process run ID and request ID are distinct. Never resume by "latest".
 - Closing a window must not stop sessions. Explicit stop must not silently force-kill an agent.
 - Human and bot input is exclusive inside the controller. Never let bot retries duplicate a delivered prompt.

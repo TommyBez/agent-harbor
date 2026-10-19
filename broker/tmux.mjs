@@ -68,8 +68,11 @@ export class Tmux {
     }
   }
   enter(run) { this.call(['send-keys', '-t', run.pane_id, 'Enter']); }
+  key(run, name) { this.call(['send-keys', '-t', run.pane_id, name]); }
   exit(run) { this.call(['send-keys', '-t', run.pane_id, '-l', '/exit']); }
   capture(run) { return this.call(['capture-pane', '-p', '-J', '-S', '-300', '-t', run.pane_id]); }
+  // Only what is on screen now: scrollback can hold dialogs that were already answered.
+  screen(run) { return this.call(['capture-pane', '-p', '-J', '-t', run.pane_id]); }
   setClientOwner(client, owner, flags, tmuxName) {
     const wanted = owner === 'grok';
     const readonly = (flags || '').split(',').includes('read-only');

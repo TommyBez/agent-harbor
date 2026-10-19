@@ -15,12 +15,13 @@ test('schema migrations preserve existing sessions and corruption never resets p
     old.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT); CREATE TABLE runs(id TEXT PRIMARY KEY); CREATE TABLE requests(prompt_hash TEXT); INSERT INTO sessions VALUES('saved','Preserve this'); INSERT INTO requests VALUES('legacy-hash'); PRAGMA user_version=1;`);
     old.close();
     const migrated = new Store(filename);
-    assert.equal(migrated.get('PRAGMA user_version').user_version, 4);
+    assert.equal(migrated.get('PRAGMA user_version').user_version, 5);
     assert.equal(migrated.get('SELECT images_json FROM requests').images_json, '[]');
     assert.equal(migrated.get('SELECT title FROM sessions').title, 'Preserve this');
     assert.equal(migrated.get('SELECT control_epoch FROM sessions').control_epoch, 0);
     assert.equal(migrated.get('SELECT payload_hash FROM requests').payload_hash, 'legacy-hash');
-    assert.ok(migrated.all('PRAGMA table_info(runs)').some(column => column.name === 'pane_id'));
+    const runColumns = migrated.all('PRAGMA table_info(runs)').map(column => column.name);
+    for (const name of ['pane_id', 'purpose', 'trust', 'trust_folder']) assert.ok(runColumns.includes(name), name);
     migrated.close();
     const corrupt = path.join(dir, 'corrupt.sqlite');
     const bytes = Buffer.from('These bytes must never be replaced by an empty database.');

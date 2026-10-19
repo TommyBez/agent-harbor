@@ -8,7 +8,7 @@ const runId = process.env.HARBOR_RUN_ID;
 const sessionId = process.env.HARBOR_SESSION_ID;
 const provider = args.includes('--no-daemon') ? 'codex' : 'claude';
 const resume = args.indexOf(provider === 'codex' ? 'resume' : '--resume');
-const nativeId = resume >= 0 ? args[resume + 1] : provider === 'claude' ? args[args.indexOf('--session-id') + 1] : randomUUID();
+const nativeId = resume >= 0 ? args[resume + 1] : provider === 'claude' && args.includes('--session-id') ? args[args.indexOf('--session-id') + 1] : randomUUID();
 const historyDirectory = path.join(home, 'fake-native');
 fs.mkdirSync(historyDirectory, { recursive: true });
 const historyFile = path.join(historyDirectory, nativeId + '.json');
@@ -31,12 +31,54 @@ function prompt(text) {
   const response = text.includes('RECALL') ? 'MEMORY:' + history.join(',') : text === 'SLOW' ? 'slow complete' : 'ANSWER:' + text;
   setTimeout(() => { emit('PostToolUse', { tool_name: 'Read', tool_response: 'fixture' }); finish(response); }, text === 'SLOW' ? 1200 : 80);
 }
-emit('SessionStart');
-process.stdout.write('Fake interactive ' + provider + '\r\n> ');
+// Startup dialogs copied from Claude Code 2.1.302 and Codex 0.162.1. A project marks itself with
+// .fake-untrusted (trust dialog until .fake-trusted exists), .fake-update (Codex update notice) and
+// .fake-hooks (Codex hook review until .fake-hooks-trusted exists).
+const hasMarker = name => fs.existsSync(path.join(process.cwd(), name));
+const untrusted = hasMarker('.fake-untrusted') && !hasMarker('.fake-trusted');
+if (provider === 'claude' && untrusted && args.some(arg => arg === '--worktree' || arg === '-w')) {
+  process.stdout.write('Error creating worktree: Workspace trust not yet accepted. Run `claude` once in this directory and accept the trust dialog, then retry with --worktree.\r\n');
+  process.exit(1);
+}
+const hooksPending = () => provider === 'codex' && hasMarker('.fake-hooks') && !hasMarker('.fake-hooks-trusted');
+const afterTrust = () => hooksPending() ? 'hooks' : 'repl';
+let mode = provider === 'codex' && hasMarker('.fake-update') ? 'update' : untrusted ? 'trust' : afterTrust();
+let choice = 0;
+function render() {
+  process.stdout.write('\x1b[2J\x1b[H');
+  if (mode === 'hooks') process.stdout.write(['  Hooks need review', '  7 hooks are new or changed.', '  Hooks can run outside the sandbox after you trust them.', ...['1. Review hooks', '2. Trust all and continue', "3. Continue without trusting (hooks won't run)"].map((label, index) => (choice === index ? '› ' : '  ') + label), '  enter confirm · esc skip'].join('\r\n'));
+  else if (mode === 'update') process.stdout.write(['  Update available · 0.162.1 → 0.163.0', '› 1. Update now (runs `install.sh`)', '  2. Skip', '  3. Skip until next version', '  enter continue · esc skip'].join('\r\n'));
+  else if (provider === 'claude') process.stdout.write([' Accessing workspace:', ' ' + process.cwd(), ' Quick safety check: Is this a project you created or one you trust?', (choice === 0 ? ' ❯ ' : '   ') + 'No, exit', (choice === 1 ? ' ❯ ' : '   ') + 'Yes, I trust this folder', ' Enter to confirm · Esc to cancel'].join('\r\n'));
+  else process.stdout.write(['  Folder access', '  ' + process.cwd(), '  Trust this folder? Codex can read, edit, and run files here.', '› 1. Trust and continue', '  2. Back to Agent Command Center', '  enter continue · esc back'].join('\r\n'));
+}
+function dialogKey(input) {
+  if (mode === 'update') {
+    if (input === '\r') fs.writeFileSync(path.join(process.cwd(), '.fake-updated'), 'installed');
+    if (input === '\r' || input === '\x1b') { mode = untrusted ? 'trust' : afterTrust(); return mode === 'repl' ? startSession() : render(); }
+    return;
+  }
+  if (mode === 'hooks') {
+    if (input === '\x1b[B' || input === '\x1bOB') { choice = Math.min(2, choice + 1); return render(); }
+    if (input === '\r' && choice === 1) { fs.writeFileSync(path.join(process.cwd(), '.fake-hooks-trusted'), 'trusted'); mode = 'repl'; return startSession(); }
+    return;
+  }
+  if (input === '\x1b[B' || input === '\x1bOB') { choice = provider === 'claude' ? 1 - choice : choice; return render(); }
+  const accepted = input === '\r' && (provider === 'codex' || choice === 1);
+  if (accepted) { fs.writeFileSync(path.join(process.cwd(), '.fake-trusted'), 'trusted'); mode = afterTrust(); choice = 0; return mode === 'repl' ? startSession() : render(); }
+  if (input === '\r' || input === '\x1b') process.exit(1);
+}
+function startSession() {
+  process.stdout.write('\x1b[2J\x1b[H');
+  emit('SessionStart');
+  process.stdout.write('Fake interactive ' + provider + '\r\n> ');
+  const dash = args.lastIndexOf('--');
+  if (dash >= 0 && args[dash + 1]) setTimeout(() => prompt(args[dash + 1]), 20);
+}
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 let buffer = '';
 process.stdin.on('data', chunk => {
+  if (mode !== 'repl') { dialogKey(chunk.toString('utf8')); return; }
   let input = chunk.toString('utf8').replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
   for (const character of input) {
     if (character === '\r') { const text = buffer; buffer = ''; prompt(text); }
@@ -44,5 +86,4 @@ process.stdin.on('data', chunk => {
     else buffer += character;
   }
 });
-const dash = args.lastIndexOf('--');
-if (dash >= 0 && args[dash + 1]) setTimeout(() => prompt(args[dash + 1]), 20);
+if (mode === 'repl') startSession(); else render();

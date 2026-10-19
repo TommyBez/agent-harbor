@@ -15,7 +15,7 @@ Harbor knows two owners: `human` and `grok`. Any automated agent, whatever its n
 2. **Never take control from the human.** Do not run `control <id> grok` or act with `--actor human` unless the user explicitly tells you to in this conversation. When a session belongs to the human, only observe.
 3. **One session ID per conversation, one request ID per task.** Generate a UUID for `--id` before `create` and a fresh `--request-id` before every task: any short string unique within that session, such as `checkout-review-002` or another UUID. Write both down in your own notes before running the command. Reuse a request ID only to retry the *identical* task.
 4. **Never replay an uncertain task under a new request ID.** After a timeout, disconnect or `uncertain` status, read the same receipt with `result`. If it stays uncertain, stop and ask the human to inspect the terminal.
-5. **Never approve anything.** Trust prompts, tool permissions, logins and hook reviews belong to the human in the CLI's own terminal. Do not type Enter into an unknown prompt, edit CLI settings or kill processes.
+5. **Never approve anything.** Folder trust, Codex hook review, tool permissions and logins belong to the human. Never run `trust` or `trusted-folders`, type Enter into a prompt, edit CLI settings or kill processes. Harbor answers trust itself only in folders the human pre-authorized.
 6. **Never resume by "latest".** A closed conversation continues only with `resume` on its own Harbor session ID. Never replace it with a new `create`.
 7. **Identify sessions by ID, never by provider.** Several Claude and Codex sessions can exist at once.
 8. Work only in a project directory the user authorized, and never publish transcripts, native IDs, credentials or private paths.
@@ -74,7 +74,19 @@ Read the JSON even when the exit code is nonzero. Keep `--timeout` shorter than 
 | `failed`, `interrupted` | 2 | The turn did not finish normally | Report it with `request.error`; decide on a new task only with the user |
 | `timeout` | 3 | Still running when the wait ended | Wait again with the **same** request ID |
 
-After `attention`, the request stays `running` and new tasks fail with `TURN_PENDING`. You may read `capture` and tell the user, in this conversation, what the CLI is asking (for example which tool), but never answer it. Then either wait for the user to say they have handled it, or keep calling `wait` on the same request ID: it returns `completed` (or another outcome) once the human has answered and the task finishes.
+### When the CLI asks to trust the folder
+
+A new folder makes the CLI ask whether to trust it, and Codex can also ask to review new or changed hooks. Then `wait` returns `attention` with `session.error` set to `TRUST_REQUIRED` or `HOOK_TRUST_REQUIRED`, and `session.trustFolder` names the folder. Tell the user once, for example: "Claude Code is waiting for you to trust `<trustFolder>` in Agent Harbor (Trust folder button, no need to take control)." Then wait with the **same** request ID and `--through-attention`, which keeps waiting while the human answers instead of returning `attention` at once:
+
+```sh
+"$HARBOR_NODE" "$HARBOR_CLI" wait <session-id> --request-id checkout-review-001 --through-attention --timeout 300000
+```
+
+The task starts by itself once they click, and the first task is not lost or repeated. Folders the user pre-authorized never stop here. If the user declines, the request ends `interrupted` with `TRUST_DECLINED` and no conversation exists. Do not retry unless the user asks.
+
+### Other attention
+
+After `attention`, the request stays `running` and new tasks fail with `TURN_PENDING`. You may read `capture` and tell the user, in this conversation, what the CLI is asking (for example which tool), but never answer it. Then either wait for the user to say they have handled it, or call `wait` on the same request ID with `--through-attention`: it returns `completed` (or another outcome) once the human has answered and the task finishes, or `timeout`.
 
 `request.response` is the answer **only** when `request.status` is `completed` for your request ID. A live process, the terminal screen or the session's older responses are not proof that your task succeeded. `--timeout` accepts 0 to 3600000 milliseconds (default 120000).
 

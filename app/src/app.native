@@ -213,7 +213,7 @@
             <separator/>
             <row gap="12" cross="center">
               <icon name="info" foreground="text_muted" width="14" height="14"/>
-              <text size="sm" grow="1" wrap="true" foreground="text_muted">Starts under your control. Trust and permission prompts stay in the terminal.</text>
+              <text size="sm" grow="1" wrap="true" foreground="text_muted">Starts under your control. Trust questions appear in Harbor; permission prompts stay in the terminal.</text>
               <button variant="primary" icon="play" disabled="{cannotCreate}" on-press="create_session">Create and start</button>
             </row>
           </column>
@@ -257,9 +257,19 @@
             <icon name="alert" foreground="warning" width="18" height="18"/>
             <column grow="1" gap="2">
               <text>{attentionTitle}</text>
+              <if test="{trustNeeded}"><text size="sm" wrap="true">{trustFolder}</text></if>
               <text size="sm" wrap="true" foreground="text_muted">{attentionHint}</text>
             </column>
-            <if test="{grok}"><button size="sm" variant="primary" disabled="{busy}" on-press="take_control">Take control</button></if>
+            <if test="{trustNeeded}">
+              <if test="{canTrustParent}">
+                <stack>
+                  <button size="sm" disabled="{busy}" on-press="trust_parent">Always trust {trustParentName}</button>
+                  <tooltip anchor="below">New projects in this folder will start without asking</tooltip>
+                </stack>
+              </if>
+              <button size="sm" variant="primary" disabled="{busy}" on-press="trust_folder">{trustAction}</button>
+            </if>
+            <else><if test="{grok}"><button size="sm" variant="primary" disabled="{busy}" on-press="take_control">Take control</button></if></else>
           </row>
           <separator/>
         </if>

@@ -162,12 +162,26 @@ The packaged desktop displayed both bot-created conversations and their final im
 
 Image delivery uses local files and no shared clipboard. This test starts with files already on disk; downloading a remote image or extracting an uploaded image from another app is a separate upstream operation. Live verification covers PNG, including multiple files and paths with spaces. JPEG/WebP are accepted formats but were not live-tested here. The manual image-paste shortcut limitations in the preceding checkpoint remain unchanged.
 
+## Workspace trust: 2026-10-19 live pass
+
+A bot-started Claude Code session with `--worktree` used to exit within a second ("Workspace trust not yet accepted"), so the human had to run `claude` in a separate terminal. This checkpoint verified the [workspace-trust flow](WORKSPACE-TRUST.md) with **Claude Code 2.1.302** and **Codex 0.162.1**. Each case used a fresh Git repository in a temporary folder, an isolated Harbor home and a bot-owned session whose task was "Reply with exactly OK. Do not use tools."
+
+| Case | Result |
+|---|---|
+| Codex in a pre-authorized folder | Harbor accepted folder trust, then Codex's review of Harbor's 7 changed observer hooks; answer `OK`, no human action |
+| Claude `--worktree probe` in a pre-authorized folder | Helper showed the trust dialog, Harbor selected "Yes" and confirmed, then repeated the launch; worktree created under `.claude/worktrees/probe` and recorded as the working directory; answer `OK` under the original request ID |
+| Codex, folder not pre-authorized | `TRUST_REQUIRED`; the bot's `trust` refused with `TRUST_HUMAN_ONLY`; the human `trust` action answered; answer `OK`, owner still Grok |
+| Claude, folder not pre-authorized (twice) | Same as Codex. The first attempt showed that a key sent as the dialog appears can be lost; Harbor now waits for the dialog to settle and retries once before verifying the choice |
+
+The 7 accepted hooks were the invocation-local `<session-flags>` entries for Harbor's observer, not repository hooks. Accepting trust stored the temporary folders in each CLI's own configuration, as pressing the keys would have done. The desktop paths were verified through Native SDK automation with fake providers: the **Trust needed** banner, **Always trust ‹parent›**, **Trust folder** for a Claude worktree session and a Codex session (after Harbor skipped Codex's update notice), and **Trust hooks** for a Codex hook review. Each completed under the original request ID without taking control. Automated checks: **50/50 backend tests** and **24/24 native model tests**, plus markup validation and the native build.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.
 - Terminal features beyond the specific text and single-image paste cases above, including Unicode cursor edge cases, IME, other clipboard cases, drag/drop and external editor integration.
 - Every CLI startup flag, model, plugin, skill, MCP integration or provider update.
-- Real provider worktree onboarding and all advanced option combinations.
+- Real provider worktree onboarding beyond the single Claude trust case above, and all advanced option combinations.
+- Claude MCP-server approvals from a repository's `.mcp.json` and other onboarding dialogs: Harbor does not answer them.
 - Sustained performance with large numbers of simultaneously active AI agents.
 - External Terminal interaction beyond attachment and UI cases outside the recorded scenarios.
 

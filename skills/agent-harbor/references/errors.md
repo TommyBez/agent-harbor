@@ -1,0 +1,48 @@
+# Agent Harbor results and errors
+
+Every command prints one JSON object. Failures are `{"ok": false, "error": {"code": "...", "message": "..."}}` with a nonzero exit code. Inspect the JSON before deciding anything; the exit code alone is not enough.
+
+## Request statuses
+
+| `request.status` | Meaning | Bot response |
+|---|---|---|
+| `intent`, `delivering`, `awaiting_ack`, `running` | Accepted or underway; no answer yet | `wait` on the same request ID |
+| `completed` | The CLI finished this exact task | `request.response` is the answer |
+| `failed`, `interrupted` | The turn did not finish normally | Report `request.error`; agree with the user before a new task |
+| `uncertain` | Delivery may or may not have happened | Keep all IDs; ask the human to inspect the terminal; never resend with a new ID |
+
+## Error codes
+
+| Code | Meaning | Bot response |
+|---|---|---|
+| `RPC_TIMEOUT`, `DAEMON_DISCONNECTED`, connection errors | The reply was lost; the operation may still have happened | Run `result` with the same request ID before anything else |
+| `DELIVERY_UNCERTAIN`, `DAEMON_RESTARTED_DURING_DELIVERY` | Harbor cannot prove whether the text reached the CLI | Ask the human to inspect the terminal; do not replay |
+| `REQUEST_UNRESOLVED` | An earlier delivery in this process still has no receipt | Inspect that receipt; new tasks stay blocked to avoid mixing answers |
+| `CONTROL_DENIED` | The other owner controls the session (or `--actor` was omitted) | Stop writing; never switch control yourself |
+| `CONTROL_CHANGED` | Control changed while a task was being prepared; nothing was submitted | Stop; the human resolves the leftover draft |
+| `TURN_PENDING` | A task is still running, or the human's turn is unfinished | `wait` for it, then retry |
+| `SESSION_CLOSING` | The CLI is exiting | Wait, then `resume` if needed |
+| `SESSION_STOPPED` | The CLI is not running | `resume --actor grok` with a new request ID |
+| `SESSION_ARCHIVED` | The session is archived | Tell the user; run `restore` only if they ask |
+| `SESSION_ALIVE` | `archive` was attempted while the CLI is running | `stop` it first, and only if the user asked to archive |
+| `CLI_NOT_READY`, `HOOKS_NOT_READY`, session `status: attention` | Trust, login, permission or hook review is pending in the terminal | Tell the user which session needs them; do not approve |
+| `PERMISSION_REQUIRED`, `CLI_ATTENTION_REQUIRED` (in `session.error`) | The agent is waiting for a human decision | Same as above |
+| `PROMPT_NOT_ACKNOWLEDGED` (in `session.error`) | The task was sent but the CLI never accepted it | Ask the human to check the terminal before retrying |
+| `REQUEST_ID_CONFLICT` | The request ID was used before with different text or images | Fix your bookkeeping; a new task needs a new ID |
+| `SESSION_ID_CONFLICT` | The session ID exists with a different provider, project, title or options | Use the right ID; do not create a lookalike |
+| `REQUEST_ID_REQUIRED` | `wait` needs `--request-id` | Pass the request ID you recorded |
+| `SESSION_ID_UNVERIFIED` | The last run never confirmed its native conversation, so exact resume is unsafe | Stop; the human repairs it |
+| `WORKTREE_MISSING` | The saved working directory no longer exists | Stop; Harbor never resumes in a different folder |
+| `STOP_TIMEOUT` | The CLI did not exit; nothing was force-killed | Tell the user; never report the CLI as closed |
+| `INVALID_PROJECT` | The project path is not an existing directory | Ask for the correct authorized path |
+| `INVALID_PROVIDER`, `INVALID_ACTOR`, `INVALID_OPTION`, `INVALID_TIMEOUT` | Malformed command | Fix the arguments |
+| `INVALID_CLI_ARGS`, `UNSUPPORTED_CLI_ARGUMENT`, `RESERVED_CLI_ARGUMENT` | A startup option is unsupported or conflicts with Harbor | Explain the limit; do not work around the validator |
+| `DEPENDENCY_MISSING` | tmux or the provider CLI was not found | Report `doctor` output; do not install software unasked |
+| `UNSUPPORTED_NODE` | The CLI ran on Node.js older than 24 | Use the app's bundled Node or a newer Node |
+| `INVALID_IMAGES`, `INVALID_IMAGE`, `INVALID_IMAGE_PATH`, `IMAGE_UNREADABLE`, `IMAGES_TOO_LARGE`, `IMAGE_CHANGED` | An image input is invalid, missing, too big or changed during capture | Fix the files before a new operation |
+| `IMAGE_COMPOSER_NOT_READY`, `IMAGE_ATTACH_UNCONFIRMED` | Harbor could not confirm the image attachment; nothing was submitted | Treat like an uncertain delivery: inspect, never replay blindly |
+| `DAEMON_UPGRADE_REQUIRED` | The running controller is too old for images | Ask the user to update Agent Harbor; nothing was sent |
+
+## Exit codes of `wait`
+
+`0` completed · `2` attention, failed or interrupted · `3` timeout · `1` command error.

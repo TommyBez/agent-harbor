@@ -56,3 +56,26 @@ except (OSError,EOFError): pass
     assert.doesNotMatch(tmux.call(['list-clients','-F','#{client_flags}']), /read-only/);
   } finally { try { tmux.call(['kill-server']); } catch {} child?.kill('SIGTERM'); await delay(100); fs.rmSync(home, { recursive:true, force:true }); }
 });
+
+test('pane discovery survives a non-UTF-8 locale where tmux escapes tab separators', { skip: !binary, timeout: 10000 }, () => {
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'harbor-locale-'));
+  const config = configuration({ ...process.env, HARBOR_HOME: home }); config.executables = { tmux: binary };
+  const tmux = new Tmux(config);
+  const saved = { LANG: process.env.LANG, LC_ALL: process.env.LC_ALL, LC_CTYPE: process.env.LC_CTYPE };
+  try {
+    for (const key of Object.keys(saved)) delete process.env[key];
+    process.env.LC_CTYPE = 'C';
+    const run = { id: 'locale-run', tmux_name: 'harbor-locale-test' };
+    const launched = tmux.launch(run, { id: 'locale-session', project: home }, { binary: '/bin/cat', args: [] });
+    assert.match(launched.paneId, /^%\d+$/);
+    assert.ok(launched.pid > 0);
+    const pane = tmux.panes().get(launched.paneId);
+    assert.equal(pane?.name, run.tmux_name);
+    assert.equal(pane.alive, true);
+    assert.equal(pane.pid, launched.pid);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    try { tmux.call(['kill-server']); } catch {}
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -46,7 +46,8 @@ export class Service {
   }
   pane(run) {
     if (!run) return null;
-    return run.pane_id ? this.panes.get(run.pane_id) : [...this.panes.values()].find(p => p.name === run.tmux_name && p.windowIndex === 0 && p.paneIndex === 0);
+    // A pane ID recorded under a non-UTF-8 locale may carry tmux's escaped separator; recover from the primary pane.
+    return /^%\d+$/.test(run.pane_id || '') ? this.panes.get(run.pane_id) : [...this.panes.values()].find(p => p.name === run.tmux_name && p.windowIndex === 0 && p.paneIndex === 0);
   }
   describe(id, compact = false) {
     const s = this.store.session(id);

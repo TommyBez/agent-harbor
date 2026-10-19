@@ -16,6 +16,10 @@ export function codexComposerImages(screen) {
   return [...composer.join('\n').matchAll(/\[Image #(\d+)\]/g)].map(match => Number(match[1]));
 }
 
+// tmux rewrites control characters such as tab to '_' in -F output when the
+// locale is not UTF-8 (typical for Finder-launched apps). Use a printable separator.
+export const FIELD = '|~|';
+
 export class Tmux {
   constructor(config) { this.config = config; this.binary = executable('tmux', config); }
   call(args, options = {}) {
@@ -24,8 +28,8 @@ export class Tmux {
   }
   panes() {
     try {
-      const result = this.call(['list-panes', '-a', '-F', '#{session_name}\t#{pane_pid}\t#{pane_dead}\t#{pane_id}\t#{pane_current_command}\t#{window_index}\t#{pane_index}']);
-      return new Map(result.split('\n').filter(Boolean).map(line => { const [name, pid, dead, id, command, windowIndex, paneIndex] = line.split('\t'); return [id, { name, pid: Number(pid), alive: dead === '0', id, command, windowIndex: Number(windowIndex), paneIndex: Number(paneIndex) }]; }));
+      const result = this.call(['list-panes', '-a', '-F', '#{session_name}|~|#{pane_pid}|~|#{pane_dead}|~|#{pane_id}|~|#{pane_current_command}|~|#{window_index}|~|#{pane_index}']);
+      return new Map(result.split('\n').filter(Boolean).map(line => { const [name, pid, dead, id, command, windowIndex, paneIndex] = line.split(FIELD); return [id, { name, pid: Number(pid), alive: dead === '0', id, command, windowIndex: Number(windowIndex), paneIndex: Number(paneIndex) }]; }));
     } catch (error) {
       if (/no server running|error connecting.*No such file|no sessions/.test(error.message)) return new Map();
       throw error;
@@ -34,11 +38,11 @@ export class Tmux {
   launch(run, session, command) {
     const configPath = path.join(this.config.home, 'tmux.conf');
     fs.writeFileSync(configPath, 'set -g remain-on-exit on\nset -g status off\nset -g prefix None\nset -g history-limit 10000\nset -g destroy-unattached off\nset -g exit-empty off\nset -g default-terminal "xterm-256color"\nunbind-key -a\n', { mode: 0o600 });
-    const result = this.call(['-f', configPath, 'new-session', '-d', '-P', '-F', '#{pane_id}\t#{pane_pid}', '-s', run.tmux_name, '-x', '140', '-y', '40', '-c', session.project,
+    const result = this.call(['-f', configPath, 'new-session', '-d', '-P', '-F', '#{pane_id}|~|#{pane_pid}', '-s', run.tmux_name, '-x', '140', '-y', '40', '-c', session.project,
       '-e', `HARBOR_HOME=${this.config.home}`, '-e', `HARBOR_SESSION_ID=${session.id}`, '-e', `HARBOR_RUN_ID=${run.id}`,
       command.binary, ...command.args]);
     fs.chmodSync(this.config.tmuxSocket, 0o600);
-    const [paneId, pid] = result.split('\t');
+    const [paneId, pid] = result.split(FIELD);
     return { paneId, pid: Number(pid) };
   }
   paste(run, text) {
@@ -73,9 +77,9 @@ export class Tmux {
       // tmux 3.6b can return success for refresh-client -f !read-only while
       // leaving the client read-only. Its explicit toggle works and is verified.
       if (readonly !== wanted) this.call(['switch-client', '-c', client, '-t', tmuxName, '-r']);
-      const current = this.call(['list-clients', '-F', '#{client_name}\t#{session_name}\t#{client_flags}']).split('\n').find(line => line.startsWith(client + '\t'));
+      const current = this.call(['list-clients', '-F', '#{client_name}|~|#{session_name}|~|#{client_flags}']).split('\n').find(line => line.startsWith(client + FIELD));
       if (!current) return; // Client detached while changing ownership.
-      const [, attachedSession, currentFlags] = current.split('\t');
+      const [, attachedSession, currentFlags] = current.split(FIELD);
       if (attachedSession !== tmuxName) fail('CLIENT_SESSION_CHANGED', 'Terminal client attached to a different session during the control change.');
       const observed = (currentFlags || '').split(',').includes('read-only');
       if (observed !== wanted) fail('CLIENT_CONTROL_FAILED', 'Terminal client did not confirm the requested control mode.');
@@ -85,17 +89,17 @@ export class Tmux {
     }
   }
   enforce(run, owner) {
-    const clients = this.call(['list-clients', '-t', run.tmux_name, '-F', '#{client_name}\t#{client_flags}']).split('\n').filter(Boolean);
-    for (const line of clients) { const [client, flags] = line.split('\t'); this.setClientOwner(client, owner, flags, run.tmux_name); }
+    const clients = this.call(['list-clients', '-t', run.tmux_name, '-F', '#{client_name}|~|#{client_flags}']).split('\n').filter(Boolean);
+    for (const line of clients) { const [client, flags] = line.split(FIELD); this.setClientOwner(client, owner, flags, run.tmux_name); }
     return clients.length;
   }
   syncOwnership(sessions) {
     let clients;
-    try { clients = this.call(['list-clients', '-F', '#{session_name}\t#{client_name}\t#{client_flags}']); }
+    try { clients = this.call(['list-clients', '-F', '#{session_name}|~|#{client_name}|~|#{client_flags}']); }
     catch (error) { if (/no server running|error connecting.*No such file|no sessions/.test(error.message)) return; throw error; }
     const owners = new Map(sessions.map(s => [s.tmuxName, s.owner]));
     for (const line of clients.split('\n').filter(Boolean)) {
-      const [name, client, flags] = line.split('\t');
+      const [name, client, flags] = line.split(FIELD);
       const owner = owners.get(name);
       if (!owner || (flags || '').split(',').includes('read-only') === (owner === 'grok')) continue;
       this.setClientOwner(client, owner, flags, name);

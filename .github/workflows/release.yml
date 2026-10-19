@@ -1,18 +1,66 @@
 name: Release
-# A pushed tag vX.Y.Z builds, tests and publishes the DMG as a GitHub release.
-# A manual run builds and verifies the DMG as a workflow artifact without publishing.
+# Every pull request merged into main is tagged vX.Y.Z and published as a GitHub
+# release with a DMG. Labels on the merged pull request choose the bump:
+# release:minor, release:major or release:skip; the default is a patch release.
+# Direct pushes to main are not released. A manual run builds and verifies the
+# DMG as a workflow artifact without tagging or publishing anything.
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+# Runs are serialized, so each one computes its version from the previous tag.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release=false
+          bump="patch"
+          pr=""
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            merged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0] // empty')
+            if [ -n "$merged" ]; then
+              pr=$(jq -r .number <<<"$merged")
+              labels=",$(jq -r '[.labels[].name] | join(",")' <<<"$merged"),"
+              release=true
+              case "$labels" in *,release:skip,*) release=false ;; esac
+              case "$labels" in *,release:major,*) bump=major ;; *,release:minor,*) bump=minor ;; esac
+            fi
+          fi
+          git fetch --tags --force
+          # shellcheck disable=SC2046
+          version=$(node scripts/next-version.mjs "$bump" $(git tag -l 'v*'))
+          {
+            echo "release=$release"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pull request: ${pr:-none} · bump: $bump · version: $version · publish: $release" >> "$GITHUB_STEP_SUMMARY"
   dmg:
+    needs: plan
+    if: needs.plan.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,14 +72,7 @@ jobs:
       - run: npm install -g pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: brew list tmux >/dev/null 2>&1 || brew install tmux
-      - name: Check the version
-        run: |
-          version=$(node -p "require('./package.json').version")
-          grep -q ".version = \"$version\"" app/app.zon || { echo "::error::app/app.zon does not declare version $version"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - run: node scripts/stamp-version.mjs "$VERSION"
       - run: pnpm test
       - run: pnpm test:ui
       - run: pnpm check
@@ -63,8 +104,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   publish:
-    needs: dmg
-    if: github.ref_type == 'tag'
+    needs: [plan, dmg]
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,21 +115,21 @@ jobs:
           pattern: agent-harbor-*-dmg
           merge-multiple: true
           path: release
-      - name: Publish the release
+      - name: Tag and publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
-          version="${TAG#v}"
           prerelease=""
-          case "$version" in 0.*|*-*) prerelease="--prerelease" ;; esac
+          case "$VERSION" in 0.*) prerelease="--prerelease" ;; esac
           cat > notes.md <<EOF
           ## Install
 
-          1. Download \`Agent-Harbor-$version-arm64.dmg\` (Apple silicon) and open it.
+          1. Download \`Agent-Harbor-$VERSION-arm64.dmg\` (Apple silicon) and open it.
           2. Drag **Agent Harbor** to **Applications**.
           3. This build is ad-hoc signed, not notarized by Apple. On first launch macOS refuses to open it: open **System Settings › Privacy & Security** and choose **Open Anyway**, or run \`xattr -dr com.apple.quarantine "/Applications/Agent Harbor.app"\`.
 
-          Agent Harbor needs tmux and the original \`claude\` and/or \`codex\` CLIs installed and signed in. The app bundles its own Node.js runtime. Verify the download with the attached \`.sha256\` file: \`shasum -a 256 -c Agent-Harbor-$version-arm64.dmg.sha256\`.
+          Agent Harbor needs tmux and the original \`claude\` and/or \`codex\` CLIs installed and signed in. The app bundles its own Node.js runtime. Verify the download with the attached \`.sha256\` file: \`shasum -a 256 -c Agent-Harbor-$VERSION-arm64.dmg.sha256\`.
           EOF
-          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --title "Agent Harbor $version" --notes-file notes.md --generate-notes --verify-tag $prerelease
+          # Creates the vX.Y.Z tag on the merged commit.
+          gh release create "v$VERSION" release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Agent Harbor $VERSION" --notes-file notes.md --generate-notes $prerelease

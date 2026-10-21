@@ -64,21 +64,26 @@ export class Service {
     // The trust helper holds no conversation; its terminal stays writable for the human.
     this.tmux.syncOwnership(this.store.all('SELECT id,owner,run_id FROM sessions WHERE run_id IS NOT NULL AND archived_at IS NULL').map(s => { const run = this.store.runRecord(s.run_id); return { ...s, owner: run.purpose === 'trust' ? 'human' : s.owner, tmuxName: run.tmux_name }; }));
   }
-  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root, and dropped
-  // every event from there on. Under the current rules a Claude incident can only precede the run's first accepted event,
-  // so one that follows an accepted event is such a legacy incident: clear it and, when nothing was accepted after it,
-  // re-import the dropped events so a lost Stop or permission prompt is not silently missing. Safe on every start.
+  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root and dropped
+  // every event from that folder; a dropped Stop or prompt could then cascade into HOOK_TURN_ID_MISMATCH. Under the
+  // current rules a Claude cwd incident only precedes the run's first accepted event, so one that follows an accepted
+  // event is legacy. For a live run, the journal tail from that point is imported again in order under the current
+  // rules, which restores lost Stops, prompts and permission requests (their events get new cursor positions). Once per run.
   recoverCwdIncidents() {
-    for (const run of this.store.all("SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.attention = 'HOOK_PROJECT_MISMATCH' AND s.provider = 'claude'")) {
-      const incident = this.store.all("SELECT details FROM audit WHERE action = 'HOOK_PROJECT_MISMATCH' AND session_id = ? ORDER BY seq", run.session_id)
-        .map(row => { try { return JSON.parse(row.details); } catch { return {}; } }).find(details => details.runId === run.id && Number.isInteger(details.offset));
-      if (!incident || !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset < ? LIMIT 1', run.id, incident.offset)) continue;
-      const replay = !run.ended_at && !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset > ? LIMIT 1', run.id, incident.offset);
+    for (const run of this.store.all("SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.attention IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH') AND s.provider = 'claude'")) {
+      const audits = this.store.all("SELECT seq, action, details FROM audit WHERE session_id = ? AND action IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH','cwd_incident_cleared') ORDER BY seq", run.session_id)
+        .map(row => { try { return { ...JSON.parse(row.details), seq: row.seq, action: row.action }; } catch { return null; } }).filter(audit => audit?.runId === run.id);
+      if (audits.some(audit => audit.action === 'cwd_incident_cleared')) continue; // An incident the replay raised again is real.
+      const cwd = audits.find(audit => audit.action === 'HOOK_PROJECT_MISMATCH' && Number.isInteger(audit.offset));
+      if (!cwd || !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset < ? LIMIT 1', run.id, cwd.offset)) continue;
+      if (run.attention === 'HOOK_TURN_ID_MISMATCH' && !audits.some(audit => audit.action === 'HOOK_TURN_ID_MISMATCH' && audit.seq > cwd.seq)) continue;
+      const replay = !run.ended_at;
       this.store.transaction(() => {
-        this.store.run('UPDATE runs SET attention = NULL, offset = CASE WHEN ? THEN ? ELSE offset END WHERE id = ?', replay ? 1 : 0, incident.offset, run.id);
-        if (run.ended_at) this.store.run("UPDATE sessions SET error = NULL WHERE run_id = ? AND error = 'HOOK_PROJECT_MISMATCH'", run.id);
-        else this.store.run("UPDATE sessions SET status = CASE WHEN pending = 1 THEN 'running' ELSE 'ready' END, error = NULL WHERE run_id = ? AND error = 'HOOK_PROJECT_MISMATCH'", run.id);
-        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, replayFrom: replay ? incident.offset : null });
+        if (replay) this.store.run('DELETE FROM events WHERE run_id = ? AND source_offset > ?', run.id, cwd.offset);
+        this.store.run('UPDATE runs SET attention = NULL, offset = CASE WHEN ? THEN ? ELSE offset END WHERE id = ?', replay ? 1 : 0, cwd.offset, run.id);
+        if (run.ended_at) this.store.run('UPDATE sessions SET error = NULL WHERE run_id = ? AND error = ?', run.id, run.attention);
+        else this.store.run("UPDATE sessions SET status = CASE WHEN pending = 1 THEN 'running' ELSE 'ready' END, error = NULL WHERE run_id = ? AND error = ?", run.id, run.attention);
+        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, replayFrom: replay ? cwd.offset : null });
       });
     }
   }

@@ -163,7 +163,7 @@ test('a Codex PermissionRequest becomes attention only if the CLI stays silent p
   assert.equal(session().status, 'running');
 });
 
-test('acknowledgement age counts from this run\'s delivery, and a superseded uncertain delivery asks nothing', t => {
+test('acknowledgement age counts from this run\'s delivery, and an uncertain delivery stays flagged after later prompts', t => {
   const { home, store, emit, session } = fixture(t);
   const old = new Date(Date.now() - 3600_000).toISOString();
   store.run("UPDATE requests SET created_at = ?, delivered_at = ? WHERE request_id = 'request'", old, new Date().toISOString());
@@ -180,10 +180,13 @@ test('acknowledgement age counts from this run\'s delivery, and a superseded unc
   store.run("UPDATE sessions SET status = 'running', error = NULL WHERE id = 'session'");
   svc.refresh();
   assert.equal(session().error, 'DELIVERY_UNCERTAIN', 'An unresolved delivery is named accurately.');
+  emit('UserPromptSubmit', { prompt: 'Human typed something else' });
+  svc.refresh();
+  assert.equal(session().error, 'DELIVERY_UNCERTAIN', 'A different prompt does not resolve it; the human must check what arrived.');
 });
 
 // Recreates what releases up to 0.1.3 left behind: a journal whose events after Claude's cd were dropped, the offset past them.
-function legacyRun(t, provider, lines, accepted, incidentAt) {
+function legacyRun(t, provider, lines, accepted, incidentAt, attention = 'HOOK_PROJECT_MISMATCH') {
   const f = fixture(t, provider);
   const journal = path.join(f.home, 'runs', 'run', 'events.jsonl');
   fs.mkdirSync(path.dirname(journal), { recursive: true });
@@ -193,10 +196,12 @@ function legacyRun(t, provider, lines, accepted, incidentAt) {
     offsets.push(Buffer.byteLength(bytes)); entries.push(entry); bytes += JSON.stringify(entry) + '\n';
   }
   fs.writeFileSync(journal, bytes);
-  for (const index of accepted) acceptEvent(f.store, f.store.runRecord('run'), entries[index], offsets[index]);
-  f.store.run("UPDATE runs SET offset = ?, attention = 'HOOK_PROJECT_MISMATCH', hooks_ready = 1 WHERE id = 'run'", Buffer.byteLength(bytes));
-  f.store.run("UPDATE sessions SET status = 'attention', error = 'HOOK_PROJECT_MISMATCH' WHERE id = 'session'");
+  for (const index of accepted.filter(index => index < incidentAt)) acceptEvent(f.store, f.store.runRecord('run'), entries[index], offsets[index]);
   f.store.audit('HOOK_PROJECT_MISMATCH', 'session', { runId: 'run', offset: offsets[incidentAt] });
+  f.store.run("UPDATE runs SET attention = 'HOOK_PROJECT_MISMATCH' WHERE id = 'run'");
+  for (const index of accepted.filter(index => index > incidentAt)) acceptEvent(f.store, f.store.runRecord('run'), entries[index], offsets[index]);
+  f.store.run('UPDATE runs SET offset = ?, attention = ?, hooks_ready = 1 WHERE id = ?', Buffer.byteLength(bytes), attention, 'run');
+  f.store.run("UPDATE sessions SET status = 'attention', error = ? WHERE id = 'session'", attention);
   return { ...f, journal };
 }
 
@@ -224,11 +229,46 @@ test('startup recovery leaves Codex incidents and first-event incidents alone, a
   const none = legacyRun(t, 'claude', () => [{ hook_event_name: 'SessionStart', cwd: os.tmpdir() }], [], 0);
   service(none.store, { home: none.home }).recoverCwdIncidents();
   assert.equal(none.store.runRecord('run').attention, 'HOOK_PROJECT_MISMATCH', 'Nothing accepted before the incident: not a legacy cd.');
-  const later = legacyRun(t, 'claude', () => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: os.tmpdir() }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }], [0, 1, 3], 2);
-  service(later.store, { home: later.home }).recoverCwdIncidents();
-  assert.equal(later.store.runRecord('run').attention, null);
-  assert.equal(later.store.runRecord('run').offset, fs.statSync(later.journal).size, 'No replay once later events were accepted.');
-  assert.equal(later.session().status, 'ready');
+});
+
+// Legacy releases still accepted events whose cwd was back at the root, then overwrote the status with the incident.
+test('recovery replays the whole tail in order, so whatever the CLI is doing now is shown truthfully', t => {
+  const sub = project => path.join(project, 'episodes', 'one');
+  const cases = [
+    ['finished', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }], 'ready', null, 'completed'],
+    ['permission waiting', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }, { hook_event_name: 'Notification', notification_type: 'permission_prompt' }], 'attention', 'PERMISSION_REQUIRED', 'running'],
+    ['usage limit', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'StopFailure', error: 'rate_limit' }], 'attention', 'STOPFAILURE', 'failed'],
+  ];
+  for (const [name, tail, status, error, request] of cases) {
+    const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, ...tail(project)], [0, 1, ...tail('').slice(1).map((_, i) => i + 3)], 2);
+    const svc = service(f.store, { home: f.home });
+    svc.recoverCwdIncidents();
+    svc.refresh();
+    assert.equal(f.store.runRecord('run').attention, null, name);
+    assert.equal(f.session().status, status, name);
+    assert.equal(f.session().error, error, name);
+    assert.equal(f.receipt('request').status, request, name);
+  }
+});
+
+test('a legacy cd incident that cascaded into a turn mismatch recovers once, with the dropped Stop restored', t => {
+  const sub = project => path.join(project, 'episodes', 'one');
+  // Stop A and the human's prompt B ran in the subfolder and were dropped; B's tools and Stop came back to the root.
+  const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: sub(project) },
+    { hook_event_name: 'Stop', last_assistant_message: 'Answer A', cwd: sub(project) }, { hook_event_name: 'UserPromptSubmit', prompt: 'Human B', prompt_id: 'turn-b', cwd: sub(project) },
+    { hook_event_name: 'PostToolUse', prompt_id: 'turn-b' }, { hook_event_name: 'Stop', last_assistant_message: 'Answer B', prompt_id: 'turn-b' }], [0, 1, 5, 6], 2, 'HOOK_TURN_ID_MISMATCH');
+  assert.equal(f.store.runRecord('run').attention, 'HOOK_TURN_ID_MISMATCH');
+  const svc = service(f.store, { home: f.home });
+  svc.recoverCwdIncidents();
+  svc.refresh();
+  assert.equal(f.store.runRecord('run').attention, null);
+  assert.equal(f.receipt('request').status, 'completed');
+  assert.equal(f.receipt('request').response, 'Answer A');
+  assert.equal(f.session().status, 'ready');
+  assert.equal(f.session().active_turn, 'turn-b');
+  f.store.run("UPDATE runs SET attention = 'HOOK_TURN_ID_MISMATCH' WHERE id = 'run'");
+  svc.recoverCwdIncidents();
+  assert.equal(f.store.runRecord('run').attention, 'HOOK_TURN_ID_MISMATCH', 'Once per run: a later incident is a real one.');
 });
 
 test('Claude launches register the failure and denial hooks; Codex never receives them', async () => {

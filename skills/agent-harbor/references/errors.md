@@ -16,7 +16,7 @@ Every command prints one JSON object. Failures are `{"ok": false, "error": {"cod
 | Code | Meaning | Bot response |
 |---|---|---|
 | `RPC_TIMEOUT`, `DAEMON_DISCONNECTED`, connection errors | The reply was lost; the operation may still have happened | Run `result` with the same request ID before anything else |
-| `DELIVERY_UNCERTAIN`, `DAEMON_RESTARTED_DURING_DELIVERY` | Harbor cannot prove whether the text reached the CLI | Ask the human to inspect the terminal; do not replay. It stops flagging the session once the CLI accepts a later prompt, but new bot tasks stay blocked with `REQUEST_UNRESOLVED` |
+| `DELIVERY_UNCERTAIN`, `DAEMON_RESTARTED_DURING_DELIVERY` | Harbor cannot prove whether the text reached the CLI | Ask the human to inspect the terminal; do not replay. The session keeps reporting it, even after the CLI accepts a later, different prompt, until that request's own prompt is accepted or the CLI exits. New bot tasks stay blocked with `REQUEST_UNRESOLVED` |
 | `REQUEST_UNRESOLVED` | An earlier delivery in this process still has no receipt | Inspect that receipt; new tasks stay blocked to avoid mixing answers |
 | `CONTROL_DENIED` | The other owner controls the session (or `--actor` was omitted) | Stop writing; never switch control yourself |
 | `CONTROL_CHANGED` | Control changed while a task was being prepared; nothing was submitted | Stop; the human resolves the leftover draft |

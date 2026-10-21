@@ -25,6 +25,8 @@ Native SDK is a pinned development dependency. Run commands through pnpm so the 
 
 Download the latest `Agent-Harbor-<version>-arm64.dmg` from [Releases](https://github.com/TommyBez/agent-harbor/releases), open it and drag **Agent Harbor** to **Applications**. The build is ad-hoc signed and not notarized, so macOS blocks the first launch: allow it in **System Settings › Privacy & Security › Open Anyway**, or run `xattr -dr com.apple.quarantine "/Applications/Agent Harbor.app"`. tmux and the authenticated original CLIs are still required; the app bundles its own Node.js runtime.
 
+To update, replace the app in **Applications** with the new release. The first command from the new app or its CLI asks the controller of the older release to stop and starts its own. Running CLIs keep going in tmux and the new controller adopts them; nothing needs to be restarted by hand.
+
 ## Develop
 
 ```sh

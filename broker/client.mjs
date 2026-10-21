@@ -4,9 +4,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ROOT, configuration, ensurePrivateHome, HarborError, fail } from './common.mjs';
+import { ROOT, configuration, ensurePrivateHome, HarborError, fail, processAlive, compareVersions, VERSION } from './common.mjs';
 
+let upgradeChecked = false;
 export async function rpc(action, args = {}, { config = configuration(), onEvent, autoStart = true, timeoutMs } = {}) {
+  if (autoStart && !upgradeChecked && action !== 'doctor') { upgradeChecked = true; await replaceOlderDaemon(config); }
   if (Array.isArray(args.images) && args.images.length && ['create','start','resume','send'].includes(action)) {
     const doctor = await rpc('doctor', {}, { config, autoStart, timeoutMs });
     if (doctor.capabilities?.requestImages !== 1) fail('DAEMON_UPGRADE_REQUIRED', 'The running controller does not support image requests. Upgrade/restart it before sending; no request was delivered.');
@@ -21,6 +23,19 @@ export async function rpc(action, args = {}, { config = configuration(), onEvent
       await delay(100);
     }
   }
+}
+// An installed update must not keep talking to the controller of the previous release.
+async function replaceOlderDaemon(config) {
+  let doctor;
+  try { doctor = await exchange(config, 'doctor', {}, undefined, 5000); } catch { return; }
+  if (compareVersions(VERSION, doctor.version) <= 0) return;
+  try {
+    if (doctor.version) await exchange(config, 'shutdown', { version: VERSION }, undefined, 5000);
+    // Releases before 0.1.2 report no version and cannot be asked; SIGTERM is their normal shutdown.
+    else if (Number.isInteger(doctor.daemonPid) && doctor.daemonPid > 1) process.kill(doctor.daemonPid, 'SIGTERM');
+    else return;
+  } catch { return; } // Busy or already gone: keep the running controller for now.
+  for (let attempt = 0; attempt < 50 && Number.isInteger(doctor.daemonPid) && processAlive(doctor.daemonPid); attempt++) await delay(100);
 }
 function startDaemon(config) {
   ensurePrivateHome(config);

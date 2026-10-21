@@ -74,7 +74,7 @@ Default state is outside the checkout:
 
 `HARBOR_HOME` can select an isolated state directory for tests or a separate installation. It must be a real directory owned by the current OS user; permissions are restricted to that user. The directory and socket location must satisfy the Unix socket path-length limit. SQLite and socket files receive restrictive permissions.
 
-The current schema is **version 4**. It separates sessions, process runs, requests, imported events and lifecycle audit records. Session records include supported startup arguments and the observed working directory. Runs pin their primary tmux pane. Explicit migrations upgrade version 1 through versions 2 and 3 to version 4; an unknown newer schema or corrupt database is an error, not permission to delete and recreate user state. SQLite WAL supports durable transactions and integrity checks.
+The current schema is **version 5**. It separates sessions, process runs, requests, imported events and lifecycle audit records. Session records include supported startup arguments and the observed working directory. Runs pin their primary tmux pane, and record their purpose (a CLI or Harbor's trust helper) and the workspace-trust dialog they showed. Explicit migrations upgrade version 1 through versions 2, 3 and 4 to version 5; an unknown newer schema or corrupt database is an error, not permission to delete and recreate user state. SQLite WAL supports durable transactions and integrity checks.
 
 The version-1 migration cannot reconstruct original request text that was never stored: legacy request hashes retain their old normalized representation. New requests store both an original-payload hash and a separate correlation hash. Retrying a legacy request with formatting differences may return a conflict; it must not replay the prompt to resolve that conflict.
 
@@ -140,6 +140,8 @@ The native UI must keep “observe” and “take control” separate. Taking co
 | Restore | Return an archived conversation to the normal list without creating a new identity |
 
 Stop does not silently force-kill a busy or unresponsive CLI. A timeout leaves an actionable state and an honest error. Repeated stop requests must not insert multiple `/exit` strings into an unrelated composer.
+
+A client never keeps using the controller of an older release. Before its first request, a client compares its version with the one `doctor` reports. If the running controller is older, the client asks it to `shutdown`, then starts its own. The controller refuses while a session operation is in progress (`DAEMON_BUSY`) and refuses any caller that is not newer (`DAEMON_NOT_OLDER`), so mixed installations cannot stop each other in turn. Releases before 0.1.2 report no version and cannot be asked; the client sends them SIGTERM, their normal shutdown. CLIs live in tmux, so replacing the controller leaves them running, and the new controller adopts them.
 
 After daemon restart, reconcile tmux panes, run identities, journal offsets and pending request receipts. After a machine reboot, historical session records remain but process liveness must be rediscovered. Do not claim reboot or power-loss recovery until the corresponding tests have run. Do not auto-resume agents after a reboot without an explicit documented policy.
 

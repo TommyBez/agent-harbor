@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { now, fail, hashPrompt, validateText, validateActor, executable, CLI } from './common.mjs';
+import { now, fail, hashPrompt, validateText, validateActor, executable, CLI, VERSION } from './common.mjs';
 import { importEvents } from './events.mjs';
 import { validateCliArgs, usesWorktree } from './arguments.mjs';
 import { launchCommand, trustHelperCommand } from './providers.mjs';
@@ -235,7 +235,7 @@ export class Service {
     if (action === 'doctor') {
       const dependencies = {};
       for (const name of ['tmux', 'codex', 'claude']) { try { dependencies[name] = { available: true, path: executable(name, this.config) }; } catch (error) { dependencies[name] = { available: false, error: error.message }; } }
-      return { ok: true, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 5, capabilities: { requestImages: 1 }, dependencies };
+      return { ok: true, version: VERSION, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 5, capabilities: { requestImages: 1 }, dependencies };
     }
     const session = this.describe(args.id);
     if (action === 'events') {
@@ -406,22 +406,23 @@ export class Service {
     if (this.duplicate(s, requestId, payloadHash)) return this.response(s.id, requestId, { duplicate: true });
     if (this.describe(s.id).alive) { if (args.text || inputImages.length) fail('SESSION_ALIVE', 'Use send for an active CLI.'); return this.response(s.id); }
     if (args.action === 'resume' && !s.run_id) fail('SESSION_NOT_STARTED', 'The session has never been started.');
-    if (s.run_id && (!s.native_id || !this.store.runRecord(s.run_id).hooks_ready)) fail('SESSION_ID_UNVERIFIED', 'The previous process did not confirm its identity; inspect its terminal before recovery.');
+    const fresh = !s.run_id || this.unstarted(s);
+    if (!fresh && (!s.native_id || !this.store.runRecord(s.run_id).hooks_ready)) fail('SESSION_ID_UNVERIFIED', 'The previous process did not confirm its identity; inspect its terminal before recovery.');
     const run = { id: randomUUID(), session_id: s.id, started_at: now() };
     run.tmux_name = 'harbor-' + run.id;
-    const nativeId = s.native_id || (s.provider === 'claude' ? randomUUID() : null);
+    const nativeId = (fresh ? null : s.native_id) || (s.provider === 'claude' ? randomUUID() : null);
     if (s.working_directory && !fs.existsSync(s.working_directory)) fail('WORKTREE_MISSING', 'The original working directory is missing. Restore it before resuming.');
     const images = stageImages(this.config, inputImages);
     const prompt = imagePrompt(s.provider, text, images);
-    const command = launchCommand({ ...s, native_id: nativeId, resuming: !!s.run_id }, this.config, prompt, images);
+    const command = launchCommand({ ...s, native_id: nativeId, resuming: !fresh }, this.config, prompt, images);
     fs.mkdirSync(path.join(this.config.home, 'runs', run.id), { mode: 0o700 });
     // Kept privately so the identical launch can be repeated once the folder is trusted.
-    if (s.provider === 'claude' && !s.run_id && usesWorktree(s)) fs.writeFileSync(path.join(this.config.home, 'runs', run.id, 'launch.json'), JSON.stringify(command), { mode: 0o600 });
+    if (s.provider === 'claude' && fresh && usesWorktree(s)) fs.writeFileSync(path.join(this.config.home, 'runs', run.id, 'launch.json'), JSON.stringify(command), { mode: 0o600 });
     this.store.transaction(() => {
       this.store.run('INSERT INTO runs(id,session_id,tmux_name,started_at) VALUES(?,?,?,?)', run.id, s.id, run.tmux_name, run.started_at);
       this.newRequest(s, run, requestId, prompt, actor, images.length ? 'cli-initial-images' : 'cli-initial-prompt', payloadHash, images);
       this.store.run("UPDATE sessions SET native_id = ?, run_id = ?, pending = 1, active_turn = NULL, status = 'starting', closing = 0, error = NULL, updated_at = ? WHERE id = ?", nativeId, run.id, run.started_at, s.id);
-      this.store.audit(s.run_id ? 'resume_intent' : 'start_intent', s.id, { requestId, runId: run.id, nativeSessionId: nativeId });
+      this.store.audit(fresh ? 'start_intent' : 'resume_intent', s.id, { requestId, runId: run.id, nativeSessionId: nativeId });
     });
     try {
       const launched = this.tmux.launch(run, { ...s, project: s.working_directory || s.project }, command);
@@ -472,6 +473,17 @@ export class Service {
     this.store.audit('trust_approved', s.id, { runId: run.id, kind: prompt.kind, folder: prompt.folder });
     await delay(300);
     this.refresh(); return this.response(s.id);
+  }
+  // Every launch died at Claude's worktree trust check, before any conversation existed (for example under a controller
+  // older than the trust helper). Starting again is a first launch, not a resume.
+  unstarted(s) {
+    if (s.provider !== 'claude' || this.store.get('SELECT 1 FROM runs WHERE session_id = ? AND hooks_ready = 1 LIMIT 1', s.id)) return false;
+    const run = this.store.runRecord(s.run_id);
+    if (!run?.ended_at) return false;
+    let screen = '';
+    try { const pane = this.pane(run); if (pane) screen = this.tmux.capture({ ...run, pane_id: pane.id }); } catch {}
+    if (!screen) try { screen = fs.readFileSync(path.join(this.config.home, 'runs', run.id, 'final-screen.txt'), 'utf8'); } catch {}
+    return WORKTREE_TRUST_ERROR.test(screen);
   }
   uncertain(id, requestId, error) {
     this.store.run("UPDATE requests SET status = 'uncertain', error = ? WHERE session_id = ? AND request_id = ? AND accepted_at IS NULL", error.message, id, requestId);

@@ -8,6 +8,8 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { rpc } from '../../broker/client.mjs';
+import { Store } from '../../broker/store.mjs';
+import { Service } from '../../broker/service.mjs';
 import { configuration, executable } from '../../broker/common.mjs';
 import { trustPrompt, autoTrustRoot, parentSuggestion, trustedFolders, updateTrustedFolders, UPDATE_NOTICE, WORKTREE_TRUST_ERROR } from '../../broker/trust.mjs';
 
@@ -244,4 +246,34 @@ test('declining trust leaves no conversation and the session can start again', {
     const done = await call('wait', { id, requestId: 'no-2', timeout: 10000 });
     assert.equal(done.outcome, 'completed');
   } finally { await env.cleanup(); }
+});
+
+for (const blocked of [true, false]) test(`a session whose only launch ${blocked ? 'died at Claude\'s worktree trust check starts again from scratch' : 'died for another reason still refuses recovery'}`, async () => {
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'harbor-unstarted-'));
+  try {
+    const project = path.join(home, 'project'); fs.mkdirSync(project);
+    const config = { home, env: process.env, executables: { claude: fake }, startupTimeout: 30000, stopTimeout: 20000 };
+    const store = new Store(path.join(home, 'harbor.sqlite'));
+    const id = randomUUID(), runId = randomUUID(), oldNative = randomUUID();
+    store.run("INSERT INTO sessions(id,title,provider,project,cli_args,owner,status,native_id,run_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", id, 'Fluidity', 'claude', project, '["--worktree","fluid"]', 'grok', 'stopped', oldNative, runId, 'now', 'now');
+    store.run("INSERT INTO runs(id,session_id,tmux_name,started_at,ended_at) VALUES(?,?,?,?,?)", runId, id, 'harbor-' + runId, 'now', 'now');
+    store.run("INSERT INTO requests(session_id,request_id,run_id,prompt_hash,payload_hash,status,actor,created_at,transport,error) VALUES(?,?,?,?,?,?,?,?,?,?)", id, 'first', runId, 'x', 'x', 'interrupted', 'grok', 'now', 'cli-initial-prompt', 'PROCESS_EXITED');
+    fs.mkdirSync(path.join(home, 'runs', runId), { recursive: true });
+    fs.writeFileSync(path.join(home, 'runs', runId, 'final-screen.txt'), blocked ? 'Error creating worktree: Workspace trust not yet accepted. Run `claude` once in this directory' : 'Segmentation fault');
+    const launched = [];
+    const tmux = { binary: '/bin/echo', args: () => [], capture: () => '', screen: () => '', syncOwnership() {}, removeDeadSession: () => false,
+      panes: () => new Map(launched.map(l => [l.paneId, { id: l.paneId, name: l.name, pid: 1, alive: true, windowIndex: 0, paneIndex: 0 }])),
+      launch(run, session, command) { launched.push({ paneId: '%' + (launched.length + 1), name: run.tmux_name, command }); return { paneId: launched.at(-1).paneId, pid: 1 }; } };
+    const service = new Service(config, store, tmux);
+    const resume = () => service.start(store.session(id), { action: 'resume', text: 'Go', requestId: 'second' }, 'grok');
+    if (!blocked) { await assert.rejects(resume(), { code: 'SESSION_ID_UNVERIFIED' }); return; }
+    const response = await resume();
+    const args = launched[0].command.args;
+    assert.ok(args.includes('--session-id') && !args.includes('--resume'), 'A first launch, not a resume of a conversation that never existed.');
+    assert.ok(args.includes('--worktree'));
+    assert.notEqual(response.session.nativeSessionId, oldNative);
+    assert.ok(fs.existsSync(path.join(home, 'runs', response.session.runId, 'launch.json')), 'The trust helper can repeat this launch.');
+    assert.equal(store.get("SELECT action FROM audit ORDER BY seq DESC LIMIT 1").action, 'start_intent');
+    store.close();
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

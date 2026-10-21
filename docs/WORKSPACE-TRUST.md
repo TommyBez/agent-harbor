@@ -50,6 +50,8 @@ Harbor answers through the CLI's own dialog, so the CLI records the decision in 
 
 Claude Code refuses `--worktree` in an untrusted folder and exits at once: "Workspace trust not yet accepted". It never shows its dialog. Harbor recognizes that exit on the first launch of a worktree session. It then opens plain `claude` in the project, with no conversation and no task, so Claude shows its own trust dialog in the session's terminal. That dialog is answered as described above. Once Claude starts, Harbor ends this helper with SIGTERM and repeats the original launch with the same arguments, native session ID and request ID. The helper's terminal is writable for the human even in a bot session, because it holds no conversation.
 
+A worktree session that died at this check before the helper existed, for example under an older controller, can simply be started or resumed again. Every one of its launches failed before any conversation existed, so Harbor treats the next one as a first launch with a new native session ID, and the trust helper takes over from there.
+
 To repeat the launch, Harbor keeps a private copy of the first launch command, including the task text, in that run's directory (`runs/<run-id>/launch.json`, mode 0600) until the launch is repeated or abandoned. The run's hook journal already holds the same text.
 
 ## Declining

@@ -375,3 +375,35 @@ test('after an unconfirmed recovery the CLI\'s next turn is adopted and the lost
   assert.equal(idle.receipt('request').error, 'RESULT_NOT_OBSERVED');
   assert.equal(idle.receipt('request').status, 'interrupted');
 });
+
+test('the unknown-turn marker survives permission dialogs and compaction, and a later continuation reopens the turn', t => {
+  const sub = project => path.join(project, 'episodes', 'one');
+  const next = (f, event) => { fs.appendFileSync(f.journal, JSON.stringify({ time: new Date().toISOString(), sessionId: 'session', runId: 'run', provider: 'claude', event: { session_id: 'native', cwd: f.project, ...event } }) + '\n'); };
+  const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: sub(project) },
+    { hook_event_name: 'UserPromptSubmit', prompt: 'Human B', prompt_id: 'turn-b', cwd: sub(project) }], [0, 1], 2);
+  const svc = service(f.store, { home: f.home });
+  svc.recoverCwdIncidents();
+  next(f, { hook_event_name: 'SessionStart', source: 'compact' });
+  svc.refresh();
+  assert.equal(f.session().error, 'TURN_STATE_UNKNOWN', 'Compaction mid-turn is not idleness.');
+  next(f, { hook_event_name: 'PermissionRequest', prompt_id: 'turn-b' });
+  next(f, { hook_event_name: 'Notification', notification_type: 'permission_prompt', prompt_id: 'turn-b' });
+  svc.refresh();
+  assert.equal(f.session().error, 'PERMISSION_REQUIRED');
+  assert.equal(f.session().active_turn, 'turn-b', 'The dialog names the running turn.');
+  next(f, { hook_event_name: 'PostToolUse', prompt_id: 'turn-b' });
+  svc.refresh();
+  assert.equal(f.session().status, 'running', 'Approving clears the dialog as in a normal run.');
+  next(f, { hook_event_name: 'Stop', prompt_id: 'turn-b', last_assistant_message: 'Interim' });
+  next(f, { hook_event_name: 'PostToolUse', prompt_id: 'turn-b' });
+  svc.refresh();
+  assert.equal(f.session().pending, 1, 'A Stop-hook continuation of the same prompt reopens the turn.');
+  // An accepted request loses an earlier delivery error, so a later supersede is reported as such.
+  const g = fixture(t);
+  g.emit('SessionStart');
+  g.store.run("UPDATE requests SET status = 'uncertain', error = 'DAEMON_RESTARTED_DURING_DELIVERY' WHERE request_id = 'request'");
+  g.emit('UserPromptSubmit', { prompt: 'Task' });
+  assert.equal(g.receipt('request').error, null);
+  g.setTurn('turn-2'); g.emit('UserPromptSubmit', { prompt: 'Human' });
+  assert.equal(g.receipt('request').error, 'TURN_SUPERSEDED');
+});

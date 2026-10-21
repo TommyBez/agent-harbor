@@ -275,6 +275,7 @@ pub const Model = struct {
         if (eq(code, "PERMISSION_REQUIRED")) return "Permission requested";
         if (eq(code, "CLI_ATTENTION_REQUIRED")) return "The CLI is waiting for a reply";
         if (eq(code, "HOOKS_NOT_READY")) return "Observation not active yet";
+        if (eq(code, "TURN_STATE_UNKNOWN")) return "Check what the CLI is doing";
         if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "Task not accepted yet";
         if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "Delivery uncertain";
         if (std.mem.startsWith(u8, code, "HOOK_")) return "CLI events incomplete";
@@ -287,6 +288,7 @@ pub const Model = struct {
         if (eq(code, "TRUST_REQUIRED")) return "The CLI asks before opening this folder. Trusting lets it read, edit and run files here, including the folder's own settings and hooks. You don't need to take control.";
         if (eq(code, "PERMISSION_REQUIRED")) return if (m.human()) "The agent is asking to use a tool. Answer in the terminal: Harbor never approves anything for you." else "The agent is asking to use a tool. Take control and answer in the terminal: Harbor never approves anything for you.";
         if (eq(code, "HOOKS_NOT_READY")) return "The CLI has not confirmed Harbor's observation. Check the terminal for a project trust prompt.";
+        if (eq(code, "TURN_STATE_UNKNOWN")) return "After the update, Harbor could not confirm this session's last turn. Check the terminal; the status updates with the CLI's next event.";
         if (eq(code, "PROMPT_NOT_ACKNOWLEDGED")) return "The task was sent but the CLI has not accepted it yet. Check the terminal before retrying.";
         if (eq(code, "DELIVERY_UNCERTAIN") or eq(code, "DAEMON_RESTARTED_DURING_DELIVERY")) return "It is not certain the task arrived. Check the terminal: Harbor does not resend it automatically.";
         return if (m.human()) "Check the request in the terminal. No permission is ever approved automatically." else "The agent needs attention. Take control and check the terminal; no permission is ever approved automatically.";

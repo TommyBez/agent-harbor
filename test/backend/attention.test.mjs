@@ -205,16 +205,21 @@ function legacyRun(t, provider, lines, accepted, incidentAt, attention = 'HOOK_P
   return { ...f, journal };
 }
 
-test('a legacy cwd incident clears on startup and the dropped events, including the Stop, are imported again', t => {
+test('a legacy cwd incident whose Stop was dropped is cleared but shown as unconfirmed until the CLI speaks again', t => {
   const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' },
     { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: path.join(project, 'episodes', 'one') }, { hook_event_name: 'Stop', last_assistant_message: 'The real answer', cwd: path.join(project, 'episodes', 'one') }], [0, 1], 2);
   const svc = service(f.store, { home: f.home });
   svc.recoverCwdIncidents();
-  assert.equal(f.store.runRecord('run').attention, null);
   svc.refresh();
-  assert.equal(f.receipt('request').status, 'completed');
-  assert.equal(f.receipt('request').response, 'The real answer');
-  assert.equal(f.session().status, 'ready');
+  assert.equal(f.store.runRecord('run').attention, null, 'The sticky marker is gone, so new events count.');
+  assert.equal(f.session().status, 'attention');
+  assert.equal(f.session().error, 'TURN_STATE_UNKNOWN', 'Harbor never invents the lost result.');
+  assert.equal(f.store.runRecord('run').offset, fs.statSync(f.journal).size, 'Nothing is replayed or re-numbered.');
+  // The human checks and sends something; the CLI's next events set the real state.
+  fs.appendFileSync(f.journal, JSON.stringify({ time: new Date().toISOString(), sessionId: 'session', runId: 'run', provider: 'claude', event: { session_id: 'native', cwd: f.project, prompt_id: 'turn-2', hook_event_name: 'UserPromptSubmit', prompt: 'Next' } }) + '\n');
+  svc.refresh();
+  assert.equal(f.session().status, 'running');
+  assert.equal(f.session().error, null);
   svc.recoverCwdIncidents();
   assert.equal(f.store.all("SELECT 1 FROM audit WHERE action = 'cwd_incident_cleared'").length, 1, 'Running again on the next start changes nothing.');
 });
@@ -232,26 +237,25 @@ test('startup recovery leaves Codex incidents and first-event incidents alone, a
 });
 
 // Legacy releases still accepted events whose cwd was back at the root, then overwrote the status with the incident.
-test('recovery replays the whole tail in order, so whatever the CLI is doing now is shown truthfully', t => {
+test('recovery reports ready only for a provably idle CLI and otherwise asks the human to check', t => {
   const sub = project => path.join(project, 'episodes', 'one');
   const cases = [
-    ['finished', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }], 'ready', null, 'completed'],
-    ['permission waiting', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }, { hook_event_name: 'Notification', notification_type: 'permission_prompt' }], 'attention', 'PERMISSION_REQUIRED', 'running'],
-    ['usage limit', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'StopFailure', error: 'rate_limit' }], 'attention', 'STOPFAILURE', 'failed'],
+    ['finished at the root', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }, { hook_event_name: 'Notification', notification_type: 'idle_prompt' }], [3, 4], 'ready', null],
+    ['permission waiting', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }, { hook_event_name: 'Notification', notification_type: 'permission_prompt' }], [3, 4], 'attention', 'TURN_STATE_UNKNOWN'],
+    ['usage limit', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'StopFailure', error: 'rate_limit' }], [3], 'attention', 'TURN_STATE_UNKNOWN'],
+    ['finished, then dropped work', project => [{ hook_event_name: 'PostToolUse', cwd: sub(project) }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }, { hook_event_name: 'UserPromptSubmit', prompt: 'More', prompt_id: 'turn-2', cwd: sub(project) }], [3], 'attention', 'TURN_STATE_UNKNOWN'],
   ];
-  for (const [name, tail, status, error, request] of cases) {
-    const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, ...tail(project)], [0, 1, ...tail('').slice(1).map((_, i) => i + 3)], 2);
+  for (const [name, tail, accepted, status, error] of cases) {
+    const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, ...tail(project)], [0, 1, ...accepted], 2);
     const svc = service(f.store, { home: f.home });
     svc.recoverCwdIncidents();
-    svc.refresh();
     assert.equal(f.store.runRecord('run').attention, null, name);
     assert.equal(f.session().status, status, name);
     assert.equal(f.session().error, error, name);
-    assert.equal(f.receipt('request').status, request, name);
   }
 });
 
-test('a legacy cd incident that cascaded into a turn mismatch recovers once, with the dropped Stop restored', t => {
+test('a legacy cd incident that cascaded into a turn mismatch is cleared once and shown as unconfirmed', t => {
   const sub = project => path.join(project, 'episodes', 'one');
   // Stop A and the human's prompt B ran in the subfolder and were dropped; B's tools and Stop came back to the root.
   const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: sub(project) },
@@ -260,12 +264,8 @@ test('a legacy cd incident that cascaded into a turn mismatch recovers once, wit
   assert.equal(f.store.runRecord('run').attention, 'HOOK_TURN_ID_MISMATCH');
   const svc = service(f.store, { home: f.home });
   svc.recoverCwdIncidents();
-  svc.refresh();
   assert.equal(f.store.runRecord('run').attention, null);
-  assert.equal(f.receipt('request').status, 'completed');
-  assert.equal(f.receipt('request').response, 'Answer A');
-  assert.equal(f.session().status, 'ready');
-  assert.equal(f.session().active_turn, 'turn-b');
+  assert.equal(f.session().error, 'TURN_STATE_UNKNOWN');
   f.store.run("UPDATE runs SET attention = 'HOOK_TURN_ID_MISMATCH' WHERE id = 'run'");
   svc.recoverCwdIncidents();
   assert.equal(f.store.runRecord('run').attention, 'HOOK_TURN_ID_MISMATCH', 'Once per run: a later incident is a real one.');

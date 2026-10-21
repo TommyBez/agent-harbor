@@ -569,3 +569,12 @@ test "the trust banner offers no parent when it would be too broad, and other at
     try std.testing.expectEqual(@as(usize,0),fx2.pendingSpawnCount());
     ui=main.AppUi.init(arena.allocator());_=try ui.finalize(try view.build(&ui,&other));
 }
+
+test "a session recovered without a confirmed turn says so and keeps take control" {
+    var model:main.Model=.{};var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"u\",\"owner\":\"grok\",\"alive\":true,\"status\":\"attention\",\"error\":\"TURN_STATE_UNKNOWN\"}]}");
+    defer model.deinit();
+    try std.testing.expectEqualStrings("Check what the CLI is doing",model.attentionTitle());
+    try std.testing.expect(std.mem.startsWith(u8,model.attentionHint(),"After the update"));
+    try std.testing.expect(!model.trustNeeded());
+}

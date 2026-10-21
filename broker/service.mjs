@@ -64,28 +64,41 @@ export class Service {
     // The trust helper holds no conversation; its terminal stays writable for the human.
     this.tmux.syncOwnership(this.store.all('SELECT id,owner,run_id FROM sessions WHERE run_id IS NOT NULL AND archived_at IS NULL').map(s => { const run = this.store.runRecord(s.run_id); return { ...s, owner: run.purpose === 'trust' ? 'human' : s.owner, tmuxName: run.tmux_name }; }));
   }
-  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root and dropped
-  // every event from that folder; a dropped Stop or prompt could then cascade into HOOK_TURN_ID_MISMATCH. Under the
-  // current rules a Claude cwd incident only precedes the run's first accepted event, so one that follows an accepted
-  // event is legacy. For a live run, the journal tail from that point is imported again in order under the current
-  // rules, which restores lost Stops, prompts and permission requests (their events get new cursor positions). Once per run.
+  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root, dropped every
+  // event from that folder, and a dropped Stop or prompt could then cascade into HOOK_TURN_ID_MISMATCH. Under the current
+  // rules a Claude cwd incident only precedes the run's first accepted event, so one that follows an accepted event is
+  // legacy. Recovery clears it so the CLI's next events count again. It never replays or guesses: a live run is 'ready'
+  // only when its last accepted event is a plain Stop with nothing dropped after it; otherwise it asks the human to check
+  // (TURN_STATE_UNKNOWN) until the CLI's next event sets the real state. Once per run.
   recoverCwdIncidents() {
     for (const run of this.store.all("SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.attention IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH') AND s.provider = 'claude'")) {
       const audits = this.store.all("SELECT seq, action, details FROM audit WHERE session_id = ? AND action IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH','cwd_incident_cleared') ORDER BY seq", run.session_id)
         .map(row => { try { return { ...JSON.parse(row.details), seq: row.seq, action: row.action }; } catch { return null; } }).filter(audit => audit?.runId === run.id);
-      if (audits.some(audit => audit.action === 'cwd_incident_cleared')) continue; // An incident the replay raised again is real.
+      if (audits.some(audit => audit.action === 'cwd_incident_cleared')) continue;
       const cwd = audits.find(audit => audit.action === 'HOOK_PROJECT_MISMATCH' && Number.isInteger(audit.offset));
       if (!cwd || !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset < ? LIMIT 1', run.id, cwd.offset)) continue;
       if (run.attention === 'HOOK_TURN_ID_MISMATCH' && !audits.some(audit => audit.action === 'HOOK_TURN_ID_MISMATCH' && audit.seq > cwd.seq)) continue;
-      const replay = !run.ended_at;
+      const idle = !run.ended_at && this.legacyIdle(run);
       this.store.transaction(() => {
-        if (replay) this.store.run('DELETE FROM events WHERE run_id = ? AND source_offset > ?', run.id, cwd.offset);
-        this.store.run('UPDATE runs SET attention = NULL, offset = CASE WHEN ? THEN ? ELSE offset END WHERE id = ?', replay ? 1 : 0, cwd.offset, run.id);
+        this.store.run('UPDATE runs SET attention = NULL WHERE id = ?', run.id);
         if (run.ended_at) this.store.run('UPDATE sessions SET error = NULL WHERE run_id = ? AND error = ?', run.id, run.attention);
-        else this.store.run("UPDATE sessions SET status = CASE WHEN pending = 1 THEN 'running' ELSE 'ready' END, error = NULL WHERE run_id = ? AND error = ?", run.id, run.attention);
-        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, replayFrom: replay ? cwd.offset : null });
+        else this.store.run('UPDATE sessions SET status = ?, error = ? WHERE run_id = ?', idle ? 'ready' : 'attention', idle ? null : 'TURN_STATE_UNKNOWN', run.id);
+        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, state: run.ended_at ? 'ended' : idle ? 'ready' : 'unknown' });
       });
     }
+  }
+  // The run's last accepted event, ignoring informational notifications, is a Stop without background work, no turn is open,
+  // and the journal holds nothing after the last accepted line (a later line would have been dropped by the legacy rule).
+  legacyIdle(run) {
+    const session = this.store.get('SELECT pending FROM sessions WHERE run_id = ?', run.id);
+    const last = this.store.get('SELECT source_offset FROM events WHERE run_id = ? ORDER BY source_offset DESC LIMIT 1', run.id);
+    const relevant = this.store.get("SELECT event_name, payload FROM events WHERE run_id = ? AND NOT (event_name = 'Notification' AND COALESCE(json_extract(payload, '$.notification_type'), '') NOT IN ('permission_prompt','elicitation_dialog','elicitation_url_dialog')) ORDER BY source_offset DESC LIMIT 1", run.id);
+    if (!session || session.pending || !last || relevant?.event_name !== 'Stop' || (JSON.parse(relevant.payload).background_tasks || []).length) return false;
+    try {
+      const journal = fs.readFileSync(path.join(this.config.home, 'runs', run.id, 'events.jsonl'));
+      const end = journal.indexOf(10, last.source_offset);
+      return end >= 0 && journal.subarray(end + 1).toString('utf8').trim() === '';
+    } catch { return false; }
   }
   // Startup dialogs shown before Harbor's observation begins. Returns true while the trust dialog is open.
   answerStartup(session, run) {

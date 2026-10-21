@@ -461,10 +461,14 @@ export class Service {
     if (!this.dialogSince.has(run.id)) this.dialogSince.set(run.id, Date.now());
     if (!this.dialogSettled(run)) await delay(1500 - (Date.now() - this.dialogSince.get(run.id)));
     prompt = read();
-    // One retry covers a key lost while the CLI was still starting; Enter waits for the trusting choice.
+    // Select the trusting choice. A second key only if the screen did not react at all, so a slow redraw
+    // never moves the selection twice; Enter waits for the trusting choice either way.
     for (let tries = 0; tries < 2 && prompt && prompt.selected !== 'accept' && prompt.navigate; tries++) {
+      const before = this.tmux.screen(live);
       this.tmux.key(live, 'Down');
-      for (let attempt = 0; attempt < 15 && prompt?.selected !== 'accept'; attempt++) { await delay(100); prompt = read(); }
+      let changed = false;
+      for (let attempt = 0; attempt < 40 && prompt?.selected !== 'accept'; attempt++) { await delay(100); prompt = read(); if (this.tmux.screen(live) !== before) { changed = true; if (attempt >= 5) break; } }
+      if (changed) break;
     }
     if (prompt?.selected !== 'accept') fail('TRUST_PROMPT_CHANGED', 'The trust prompt did not show the expected choice. Answer it in the terminal.');
     this.tmux.key(live, 'Enter');

@@ -77,8 +77,15 @@ function startSession() {
 process.stdin.setRawMode?.(true);
 process.stdin.resume();
 let buffer = '';
+let pendingEscape = null;
 process.stdin.on('data', chunk => {
-  if (mode !== 'repl') { dialogKey(chunk.toString('utf8')); return; }
+  if (mode !== 'repl') {
+    // Like a terminal's escape-time: a lone ESC may be the start of a cursor key split across reads.
+    const input = (pendingEscape ? '\x1b' : '') + chunk.toString('utf8');
+    clearTimeout(pendingEscape); pendingEscape = null;
+    if (input === '\x1b') { pendingEscape = setTimeout(() => { pendingEscape = null; dialogKey('\x1b'); }, 50); return; }
+    dialogKey(input); return;
+  }
   let input = chunk.toString('utf8').replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
   for (const character of input) {
     if (character === '\r') { const text = buffer; buffer = ''; prompt(text); }

@@ -34,6 +34,13 @@ export function importEvents(store, config, run) {
     store.run('UPDATE runs SET offset = ? WHERE id = ?', offset, run.id);
   });
 }
+// Claude runs one turn at a time. When a new turn shows up while an older request still runs and its turn never stopped
+// (an Esc interrupt fires no hook, or a legacy rule dropped its Stop), that request is over: superseded by the human, or
+// marked RESULT_NOT_OBSERVED by recovery. A Stop recorded with background work is a real end of turn and is left alone.
+function closeOrphans(store, run, session, turnId, time) {
+  if (session.provider !== 'claude') return;
+  store.run("UPDATE requests SET status = 'interrupted', error = COALESCE(error, 'TURN_SUPERSEDED'), completed_at = ? WHERE run_id = ? AND status = 'running' AND native_turn_id IS NOT NULL AND native_turn_id != ? AND native_turn_id NOT IN (SELECT turn_id FROM events WHERE run_id = ? AND turn_id IS NOT NULL AND event_name IN ('Stop','StopFailure'))", time, run.id, turnId, run.id);
+}
 export function incident(store, run, code, details = {}) {
   if (store.runRecord(run.id)?.attention === code) return;
   store.run('UPDATE runs SET attention = ? WHERE id = ?', code, run.id);
@@ -67,9 +74,7 @@ export function acceptEvent(store, run, entry, offset) {
   const event = e.hook_event_name;
   if (event === 'UserPromptSubmit') {
     if (!turnId) { incident(store, run, 'HOOK_TURN_ID_MISSING'); return; }
-    // A new Claude prompt while the previous turn never stopped (an Esc interrupt fires no hook) ends that turn's request.
-    if (session.provider === 'claude' && session.pending && session.active_turn && session.active_turn !== turnId && !store.get("SELECT 1 FROM events WHERE run_id = ? AND turn_id = ? AND event_name IN ('Stop','StopFailure') LIMIT 1", run.id, session.active_turn))
-      store.run("UPDATE requests SET status = 'interrupted', error = 'TURN_SUPERSEDED', completed_at = ? WHERE run_id = ? AND native_turn_id = ? AND status = 'running'", time, run.id, session.active_turn);
+    closeOrphans(store, run, session, turnId, time);
     const hash = typeof e.prompt === 'string' ? hashPrompt(e.prompt) : null;
     let request = hash ? store.get("SELECT * FROM requests WHERE run_id = ? AND prompt_hash = ? AND accepted_at IS NULL AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at LIMIT 1", run.id, hash) : null;
     if (!request && hash && session.provider === 'codex') {
@@ -90,12 +95,18 @@ export function acceptEvent(store, run, entry, offset) {
     // Approval routing started; a reviewer or another hook may answer it. Service.refresh raises attention only if the
     // CLI then stays silent (Codex), and Claude reports a waiting dialog through its permission_prompt Notification.
   } else if (['PostToolUse', 'PostToolUseFailure', 'PermissionDenied'].includes(event)) {
+    // After a legacy recovery the turn is unknown; the CLI's first tool event names it again.
+    if (turnId && session.provider === 'claude' && !session.active_turn && session.error === 'TURN_STATE_UNKNOWN') {
+      closeOrphans(store, run, session, turnId, time);
+      store.run('UPDATE sessions SET active_turn = ? WHERE id = ?', turnId, session.id); session.active_turn = turnId;
+    }
     if (turnId && turnId === session.active_turn && !run.attention) {
       store.run("UPDATE requests SET status = 'running', completed_at = NULL WHERE run_id = ? AND native_turn_id = ? AND status = 'completed'", run.id, turnId);
       store.run('UPDATE sessions SET pending = 1, status = ?, error = NULL WHERE id = ?', 'running', session.id);
     }
   } else if (['Stop', 'StopFailure', 'Interrupt'].includes(event)) {
     if (!turnId || (session.active_turn && turnId !== session.active_turn)) { incident(store, run, 'HOOK_TURN_ID_MISMATCH'); return; }
+    if (!session.active_turn) closeOrphans(store, run, session, turnId, time);
     const request = store.get('SELECT * FROM requests WHERE run_id = ? AND native_turn_id = ? ORDER BY created_at DESC LIMIT 1', run.id, turnId);
     const status = event === 'Stop' ? 'completed' : event === 'StopFailure' ? 'failed' : 'interrupted';
     const response = event === 'Stop' && typeof e.last_assistant_message === 'string' ? e.last_assistant_message : null;

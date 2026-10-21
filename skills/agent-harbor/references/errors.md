@@ -32,7 +32,8 @@ Every command prints one JSON object. Failures are `{"ok": false, "error": {"cod
 | `CLI_NOT_READY`, `HOOKS_NOT_READY`, session `status: attention` | Login, permission, an unrecognized dialog or hook observation is pending in the terminal | Tell the user which session needs them; do not approve |
 | `PERMISSION_REQUIRED`, `CLI_ATTENTION_REQUIRED` (in `session.error`) | The agent is waiting for a human decision | Same as above |
 | `PROMPT_NOT_ACKNOWLEDGED` (in `session.error`) | The task was sent but the CLI never accepted it | Ask the human to check the terminal before retrying |
-| `TURN_STATE_UNKNOWN` (in `session.error`) | After an update, Harbor could not confirm the session's last turn | Read `result` for your request; tell the user and wait for the next CLI event (`wait --through-attention`) instead of resending |
+| `TURN_STATE_UNKNOWN` (in `session.error`) | After an update, Harbor could not confirm the session's last turn | Read `result` for your request; tell the user to check the terminal (an idle CLI needs them to send a message) and wait with `wait --through-attention`; never resend |
+| `RESULT_NOT_OBSERVED` (in `request.error`) | Harbor never saw how that turn ended, so it has no answer for it | Tell the user; the answer may be visible in the terminal |
 | `TURN_SUPERSEDED` (in `request.error`, status `interrupted`) | The human interrupted the turn and typed their own prompt | Report it; do not resend the task unless the user asks |
 | `STOPFAILURE` (in `session.error`) | Claude stopped on an account or credential problem (billing, login, model access) | Tell the user; it needs them. Transient API errors (`overloaded`, `server_error`, `max_output_tokens`) leave the session `ready` with the error on `request.error`; usage limits (`rate_limit`) keep it in attention |
 | `REQUEST_ID_CONFLICT` | The request ID was used before with different text or images | Fix your bookkeeping; a new task needs a new ID |

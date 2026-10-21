@@ -342,3 +342,36 @@ test('a Codex worktree launched from a repository subfolder is learned at the sa
   assert.equal(check(path.join(tree, 'api', 'src')), null, 'A different position inside the checkout is not the worktree.');
   assert.equal(check(path.join(project, 'src')), null, 'A folder inside the project is not a worktree.');
 });
+
+test('after an unconfirmed recovery the CLI\'s next turn is adopted and the lost request ends as not observed', t => {
+  const sub = project => path.join(project, 'episodes', 'one');
+  const next = (f, event) => { fs.appendFileSync(f.journal, JSON.stringify({ time: new Date().toISOString(), sessionId: 'session', runId: 'run', provider: 'claude', event: { session_id: 'native', cwd: f.project, ...event } }) + '\n'); };
+  // Turn A's Stop and the human's prompt B were dropped in the subfolder; B is still running when Harbor updates.
+  const running = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: sub(project) },
+    { hook_event_name: 'Stop', last_assistant_message: 'Answer A', cwd: sub(project) }, { hook_event_name: 'UserPromptSubmit', prompt: 'Human B', prompt_id: 'turn-b', cwd: sub(project) }], [0, 1], 2);
+  const svc = service(running.store, { home: running.home });
+  svc.recoverCwdIncidents();
+  assert.equal(running.session().error, 'TURN_STATE_UNKNOWN');
+  assert.equal(running.receipt('request').error, 'RESULT_NOT_OBSERVED');
+  next(running, { hook_event_name: 'PostToolUse', prompt_id: 'turn-b' });
+  svc.refresh();
+  assert.equal(running.session().status, 'running', 'The CLI\'s next tool event names the turn again.');
+  assert.equal(running.session().active_turn, 'turn-b');
+  next(running, { hook_event_name: 'Stop', prompt_id: 'turn-b', last_assistant_message: 'Answer B' });
+  svc.refresh();
+  assert.equal(running.store.runRecord('run').attention, null, 'No new turn mismatch.');
+  assert.equal(running.session().status, 'ready');
+  assert.equal(running.receipt('request').status, 'interrupted');
+  assert.equal(running.receipt('request').error, 'RESULT_NOT_OBSERVED', 'Never reported as a human interruption.');
+  // The CLI finished in the subfolder and is idle: the human's next prompt moves it on.
+  const idle = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: sub(project) },
+    { hook_event_name: 'Stop', last_assistant_message: 'Answer A', cwd: sub(project) }], [0, 1], 2);
+  const idleSvc = service(idle.store, { home: idle.home });
+  idleSvc.recoverCwdIncidents();
+  next(idle, { hook_event_name: 'UserPromptSubmit', prompt_id: 'turn-c', prompt: 'Human C' });
+  next(idle, { hook_event_name: 'Stop', prompt_id: 'turn-c', last_assistant_message: 'Answer C' });
+  idleSvc.refresh();
+  assert.equal(idle.session().status, 'ready');
+  assert.equal(idle.receipt('request').error, 'RESULT_NOT_OBSERVED');
+  assert.equal(idle.receipt('request').status, 'interrupted');
+});

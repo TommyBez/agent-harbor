@@ -200,7 +200,7 @@ Investigation:
   - an over-broad suppression of uncertain deliveries;
   - several tests that did not exercise the new paths.
 
-Automated checks: **74/74 backend tests**, including end-to-end fake-CLI runs for:
+Automated checks: **75/75 backend tests**, including end-to-end fake-CLI runs for:
 - a subdirectory `cd`;
 - a permission held open 1.5 s and then answered by a hook;
 - a cron-only Stop;

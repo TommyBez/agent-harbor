@@ -82,7 +82,13 @@ export class Service {
       this.store.transaction(() => {
         this.store.run('UPDATE runs SET attention = NULL WHERE id = ?', run.id);
         if (run.ended_at) this.store.run('UPDATE sessions SET error = NULL WHERE run_id = ? AND error = ?', run.id, run.attention);
-        else this.store.run('UPDATE sessions SET status = ?, error = ? WHERE run_id = ?', idle ? 'ready' : 'attention', idle ? null : 'TURN_STATE_UNKNOWN', run.id);
+        else if (idle) this.store.run("UPDATE sessions SET status = 'ready', error = NULL WHERE run_id = ?", run.id);
+        else {
+          // Forget the turn the legacy rule may have lost track of: the CLI's next event sets it. An open request keeps
+          // running (its own Stop can still arrive) but is marked so it is never reported as a human interruption.
+          this.store.run("UPDATE sessions SET status = 'attention', error = 'TURN_STATE_UNKNOWN', active_turn = NULL WHERE run_id = ?", run.id);
+          this.store.run("UPDATE requests SET error = 'RESULT_NOT_OBSERVED' WHERE run_id = ? AND status = 'running'", run.id);
+        }
         this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, state: run.ended_at ? 'ended' : idle ? 'ready' : 'unknown' });
       });
     }

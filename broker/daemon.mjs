@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { configuration, ensurePrivateHome, errorJSON, now, processAlive, fail } from './common.mjs';
+import { configuration, ensurePrivateHome, errorJSON, now, processAlive, fail, compareVersions, VERSION } from './common.mjs';
 import { Store } from './store.mjs';
 import { Tmux } from './tmux.mjs';
 import { Service } from './service.mjs';
@@ -71,6 +71,13 @@ try {
       try {
         request = JSON.parse(buffer.slice(0, newline));
         if (typeof request.id !== 'string' || typeof request.action !== 'string' || !request.args || typeof request.args !== 'object') fail('INVALID_REQUEST', 'Invalid IPC request.');
+        if (request.action === 'shutdown') {
+          // A newer installation replaces this controller. CLIs keep running in tmux and the next daemon adopts them.
+          if (compareVersions(request.args.version, VERSION) <= 0) fail('DAEMON_NOT_OLDER', `Only a newer Agent Harbor can replace controller ${VERSION}.`);
+          if (service.queues.size) fail('DAEMON_BUSY', 'A session operation is in progress. Retry shortly.');
+          socket.end(JSON.stringify({ id: request.id, ok: true, version: VERSION }) + '\n', () => { cleanup(); process.exit(0); });
+          return;
+        }
         const response = await service.execute(request.action, request.args);
         socket.write(JSON.stringify({ id: request.id, ...response }) + '\n');
         if (request.action === 'watch') watchers.set(socket, { id: request.id, args: request.args, previous: JSON.stringify(response) });

@@ -6,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const CLI = path.join(ROOT, 'bin/harbor.mjs');
+export const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+/** Orders X.Y.Z versions; a missing or malformed version sorts first, as releases before 0.1.2 report none. */
+export function compareVersions(a, b) {
+  const parse = value => /^(\d+)\.(\d+)\.(\d+)$/.exec(String(value ?? ''))?.slice(1).map(Number) || [0, 0, 0];
+  const [x, y] = [parse(a), parse(b)];
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+}
 export const now = () => new Date().toISOString();
 export class HarborError extends Error {
   constructor(code, message, details) { super(message); this.code = code; this.details = details; }

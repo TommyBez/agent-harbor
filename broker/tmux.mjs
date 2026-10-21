@@ -40,7 +40,8 @@ export class Tmux {
     fs.writeFileSync(configPath, 'set -g remain-on-exit on\nset -g status off\nset -g prefix None\nset -g history-limit 10000\nset -g destroy-unattached off\nset -g exit-empty off\nset -g default-terminal "xterm-256color"\nunbind-key -a\n', { mode: 0o600 });
     const result = this.call(['-f', configPath, 'new-session', '-d', '-P', '-F', '#{pane_id}|~|#{pane_pid}', '-s', run.tmux_name, '-x', '140', '-y', '40', '-c', session.project,
       '-e', `HARBOR_HOME=${this.config.home}`, '-e', `HARBOR_SESSION_ID=${session.id}`, '-e', `HARBOR_RUN_ID=${run.id}`,
-      command.binary, ...command.args]);
+      // tmux gives the new pane the creating client's PATH and ignores -e PATH.
+      command.binary, ...command.args], this.config.sessionPath ? { env: { ...process.env, PATH: this.config.sessionPath } } : {});
     fs.chmodSync(this.config.tmuxSocket, 0o600);
     const [paneId, pid] = result.split(FIELD);
     return { paneId, pid: Number(pid) };

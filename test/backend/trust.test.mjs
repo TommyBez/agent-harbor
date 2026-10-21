@@ -225,6 +225,38 @@ test('a pre-authorized worktree launch needs nobody', { skip: !supported, timeou
   } finally { await env.cleanup(); }
 });
 
+test('uppercase session IDs from uuidgen are observed, including through the trust helper', { skip: !supported, timeout: 40000 }, async () => {
+  const env = await environment(); const { call, project } = env;
+  try {
+    await call('trusted-folders', { add: env.projects });
+    const id = randomUUID().toUpperCase();
+    await call('create', { id, provider: 'claude', project, title: 'Upper', owner: 'grok', cliArgs: ['--worktree', 'fluid'], text: 'MARKER:upper', requestId: 'up-1' });
+    const done = await call('wait', { id, requestId: 'up-1', timeout: 20000 });
+    assert.equal(done.outcome, 'completed', JSON.stringify(done.session));
+    assert.equal(done.session.id, id);
+    // The real observer, not the fake CLI's own journal writer, must accept the uppercase identity.
+    const runId = randomUUID();
+    fs.mkdirSync(path.join(env.home, 'runs', runId));
+    execFileSync(process.execPath, [fileURLToPath(new URL('../../broker/hooks/observe.mjs', import.meta.url)), 'claude'], { input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'x' }), env: { ...process.env, HARBOR_HOME: env.home, HARBOR_SESSION_ID: id, HARBOR_RUN_ID: runId } });
+    const line = JSON.parse(fs.readFileSync(path.join(env.home, 'runs', runId, 'events.jsonl'), 'utf8'));
+    assert.equal(line.sessionId, id);
+  } finally { await env.cleanup(); }
+});
+
+test('the trust helper continues when the dialog closes even if hooks never report', { skip: !supported, timeout: 40000 }, async () => {
+  const env = await environment(['.fake-helper-no-hooks']); const { call, project } = env;
+  try {
+    const id = randomUUID();
+    await call('create', { id, provider: 'claude', project, title: 'Silent helper', owner: 'grok', cliArgs: ['--worktree'], text: 'MARKER:silent', requestId: 'silent-1' });
+    const waiting = await call('wait', { id, requestId: 'silent-1', timeout: 10000 });
+    assert.equal(waiting.session.error, 'TRUST_REQUIRED');
+    await call('trust', { id, actor: 'human' });
+    const done = await call('wait', { id, requestId: 'silent-1', timeout: 20000, throughAttention: true });
+    assert.equal(done.outcome, 'completed', JSON.stringify(done.session));
+    assert.ok(env.audit().includes('trust_helper_dialog_closed'));
+  } finally { await env.cleanup(); }
+});
+
 test('declining trust leaves no conversation and the session can start again', { skip: !supported, timeout: 30000 }, async () => {
   const env = await environment(); const { call, project } = env;
   try {

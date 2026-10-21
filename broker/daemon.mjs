@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { configuration, ensurePrivateHome, errorJSON, now, processAlive, fail, compareVersions, VERSION } from './common.mjs';
+import { configuration, ensurePrivateHome, errorJSON, now, processAlive, fail, compareVersions, VERSION, loginShellPath, sessionPath } from './common.mjs';
 import { Store } from './store.mjs';
 import { Tmux } from './tmux.mjs';
 import { Service } from './service.mjs';
@@ -50,6 +50,8 @@ function cleanup() {
 try {
   acquireLock();
   store = new Store(config.database);
+  config.sessionPath = sessionPath(config.env);
+  config.pathReady = loginShellPath(config.env).then(found => { if (found) config.sessionPath = sessionPath(config.env, found); });
   const service = new Service(config, store, new Tmux(config));
   // Interrupted delivery is not automatically replayed. Hooks may still resolve it.
   store.run("UPDATE requests SET status = 'uncertain', error = 'DAEMON_RESTARTED_DURING_DELIVERY' WHERE status IN ('intent','delivering')");

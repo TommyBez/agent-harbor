@@ -14,7 +14,10 @@ fs.mkdirSync(historyDirectory, { recursive: true });
 const historyFile = path.join(historyDirectory, nativeId + '.json');
 let history = fs.existsSync(historyFile) ? JSON.parse(fs.readFileSync(historyFile, 'utf8')) : [];
 let activeTurn;
+// .fake-helper-no-hooks: a helper launch (no --session-id) whose hooks never report, like a failing observer.
+const silent = !args.includes('--session-id') && !args.includes('--resume') && !args.includes('--no-daemon') && fs.existsSync(path.join(process.cwd(), '.fake-helper-no-hooks'));
 function emit(event, data = {}) {
+  if (silent) return;
   fs.appendFileSync(path.join(home, 'runs', runId, 'events.jsonl'), JSON.stringify({ time: new Date().toISOString(), sessionId, runId, provider,
     event: { hook_event_name: event, session_id: nativeId, cwd: process.cwd(), ...(activeTurn ? { [provider === 'codex' ? 'turn_id' : 'prompt_id']: activeTurn } : {}), ...data } }) + '\n');
 }
@@ -28,7 +31,7 @@ function prompt(text) {
   if (text === 'BACKGROUND') { finish('background', { background_tasks: ['task'] }); return; }
   const marker = /MARKER:(\S+)/.exec(text)?.[1];
   if (marker) { history.push(marker); fs.writeFileSync(historyFile, JSON.stringify(history)); }
-  const response = text.includes('RECALL') ? 'MEMORY:' + history.join(',') : text === 'SLOW' ? 'slow complete' : 'ANSWER:' + text;
+  const response = text.includes('RECALL') ? 'MEMORY:' + history.join(',') : text === 'SLOW' ? 'slow complete' : text === 'PATH?' ? 'PATH:' + process.env.PATH : 'ANSWER:' + text;
   setTimeout(() => { emit('PostToolUse', { tool_name: 'Read', tool_response: 'fixture' }); finish(response); }, text === 'SLOW' ? 1200 : 80);
 }
 // Startup dialogs copied from Claude Code 2.1.302 and Codex 0.162.1. A project marks itself with

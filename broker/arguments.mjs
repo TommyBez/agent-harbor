@@ -76,3 +76,8 @@ export function sameRepository(project, directory) {
   };
   try { return common(project) === common(directory); } catch { return false; }
 }
+/** A linked worktree of the project's repository: the root of a different checkout, not a folder inside the project. */
+export function worktreeOf(project, directory) {
+  const top = cwd => fs.realpathSync(execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore','pipe','ignore'] }).trim());
+  try { const root = top(directory); return root === fs.realpathSync(directory) && root !== top(project) && sameRepository(project, directory); } catch { return false; }
+}

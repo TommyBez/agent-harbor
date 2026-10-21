@@ -26,7 +26,16 @@ function prompt(text) {
   if (text === '/exit') { emit('SessionEnd'); setTimeout(() => process.exit(0), 30); return; }
   activeTurn = randomUUID();
   emit('UserPromptSubmit', { prompt: text });
-  if (text === 'BLOCK') { emit('PermissionRequest', { tool_name: 'Write' }); return; }
+  // A dialog the human must answer: Claude also sends its permission_prompt Notification once the dialog waits.
+  if (text === 'BLOCK') { emit('PermissionRequest', { tool_name: 'Write' }); if (provider === 'claude') setTimeout(() => emit('Notification', { notification_type: 'permission_prompt' }), 100); return; }
+  // A permission another hook or reviewer answers at once: the tool runs and no dialog is shown.
+  if (text === 'AUTO_ALLOWED') { emit('PermissionRequest', { tool_name: 'Bash' }); setTimeout(() => { emit('PostToolUse', { tool_name: 'Bash' }); finish('allowed'); }, 150); return; }
+  // Claude's Bash tool keeps a cd into a subdirectory for later tools and hooks.
+  if (text === 'CD_SUBDIR') { const sub = path.join(process.cwd(), 'sub'); fs.mkdirSync(sub, { recursive: true }); setTimeout(() => { emit('PostToolUse', { tool_name: 'Bash', cwd: sub }); process.stdout.write('\r\nin sub\r\n> '); emit('Stop', { last_assistant_message: 'done in sub', cwd: sub }); }, 80); return; }
+  if (text === 'FAIL_OVERLOADED' || text === 'FAIL_BILLING') { setTimeout(() => emit('StopFailure', { error: text === 'FAIL_OVERLOADED' ? 'overloaded' : 'billing_error' }), 80); return; }
+  if (text === 'CRON') { finish('scheduled', { session_crons: [{ id: 'every-hour', recurring: true }] }); return; }
+  // A turn the human interrupts with Esc: Claude fires no further hook for it.
+  if (text === 'NEVER_STOPS') { setTimeout(() => emit('PostToolUse', { tool_name: 'Read' }), 50); return; }
   if (text === 'AFTER_STOP') { finish('intermediate'); setTimeout(() => { emit('PostToolUse', { tool_name: 'test' }); finish('final'); }, 250); return; }
   if (text === 'BACKGROUND') { finish('background', { background_tasks: ['task'] }); return; }
   const marker = /MARKER:(\S+)/.exec(text)?.[1];

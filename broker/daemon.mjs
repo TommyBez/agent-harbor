@@ -53,6 +53,7 @@ try {
   config.sessionPath = sessionPath(config.env);
   config.pathReady = loginShellPath(config.env).then(found => { if (found) config.sessionPath = sessionPath(config.env, found); });
   const service = new Service(config, store, new Tmux(config));
+  service.recoverCwdIncidents();
   // Interrupted delivery is not automatically replayed. Hooks may still resolve it.
   store.run("UPDATE requests SET status = 'uncertain', error = 'DAEMON_RESTARTED_DURING_DELIVERY' WHERE status IN ('intent','delivering')");
   service.refresh();

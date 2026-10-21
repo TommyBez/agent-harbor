@@ -38,9 +38,7 @@ export class Service {
         } else if (!run.hooks_ready && since(run.started_at) > this.config.startupTimeout) {
           this.store.run("UPDATE sessions SET status = 'attention', error = 'HOOKS_NOT_READY' WHERE id = ?", session.id);
         } else {
-          // An uncertain delivery that the CLI already moved past (it accepted a later prompt) asks nothing of the human now;
-          // it still blocks a new bot task through REQUEST_UNRESOLVED.
-          const delivery = this.store.get("SELECT status, created_at, delivered_at FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') AND NOT (status = 'uncertain' AND EXISTS (SELECT 1 FROM events ev WHERE ev.run_id = requests.run_id AND ev.event_name = 'UserPromptSubmit' AND ev.time > requests.created_at)) ORDER BY created_at DESC LIMIT 1", run.id);
+          const delivery = this.store.get("SELECT status, created_at, delivered_at FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at DESC LIMIT 1", run.id);
           // Age counts from this run's delivery: a request moved to a relaunch keeps its original created_at.
           const sent = delivery && new Date(Math.max(Date.parse(delivery.delivered_at || delivery.created_at), Date.parse(run.started_at))).toISOString();
           if (delivery && since(sent) > this.config.startupTimeout && current.status !== 'attention') this.store.run("UPDATE sessions SET status = 'attention', error = ? WHERE id = ?", delivery.status === 'uncertain' ? 'DELIVERY_UNCERTAIN' : 'PROMPT_NOT_ACKNOWLEDGED', session.id);
@@ -66,15 +64,21 @@ export class Service {
     // The trust helper holds no conversation; its terminal stays writable for the human.
     this.tmux.syncOwnership(this.store.all('SELECT id,owner,run_id FROM sessions WHERE run_id IS NOT NULL AND archived_at IS NULL').map(s => { const run = this.store.runRecord(s.run_id); return { ...s, owner: run.purpose === 'trust' ? 'human' : s.owner, tmuxName: run.tmux_name }; }));
   }
-  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root. A run whose
-  // first event matched the project can only have hit it that way, so its incident no longer applies.
+  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root, and dropped
+  // every event from there on. Under the current rules a Claude incident can only precede the run's first accepted event,
+  // so one that follows an accepted event is such a legacy incident: clear it and, when nothing was accepted after it,
+  // re-import the dropped events so a lost Stop or permission prompt is not silently missing. Safe on every start.
   recoverCwdIncidents() {
-    for (const run of this.store.all("SELECT * FROM runs WHERE attention = 'HOOK_PROJECT_MISMATCH' AND hooks_ready = 1")) {
+    for (const run of this.store.all("SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.attention = 'HOOK_PROJECT_MISMATCH' AND s.provider = 'claude'")) {
+      const incident = this.store.all("SELECT details FROM audit WHERE action = 'HOOK_PROJECT_MISMATCH' AND session_id = ? ORDER BY seq", run.session_id)
+        .map(row => { try { return JSON.parse(row.details); } catch { return {}; } }).find(details => details.runId === run.id && Number.isInteger(details.offset));
+      if (!incident || !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset < ? LIMIT 1', run.id, incident.offset)) continue;
+      const replay = !run.ended_at && !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset > ? LIMIT 1', run.id, incident.offset);
       this.store.transaction(() => {
-        this.store.run('UPDATE runs SET attention = NULL WHERE id = ?', run.id);
+        this.store.run('UPDATE runs SET attention = NULL, offset = CASE WHEN ? THEN ? ELSE offset END WHERE id = ?', replay ? 1 : 0, incident.offset, run.id);
         if (run.ended_at) this.store.run("UPDATE sessions SET error = NULL WHERE run_id = ? AND error = 'HOOK_PROJECT_MISMATCH'", run.id);
         else this.store.run("UPDATE sessions SET status = CASE WHEN pending = 1 THEN 'running' ELSE 'ready' END, error = NULL WHERE run_id = ? AND error = 'HOOK_PROJECT_MISMATCH'", run.id);
-        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id });
+        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, replayFrom: replay ? incident.offset : null });
       });
     }
   }

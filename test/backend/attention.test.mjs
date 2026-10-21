@@ -99,11 +99,14 @@ test('after an interrupt or a transient API error the CLI is ready; account prob
   assert.equal(codex.receipt('request').status, 'interrupted');
   assert.equal(codex.session().status, 'ready');
   assert.equal(codex.session().pending, 0);
-  for (const [error, expected] of [['overloaded', 'ready'], [{ type: 'server_error' }, 'ready'], ['rate_limit', 'ready'], ['billing_error', 'attention'], ['authentication_failed', 'attention'], [undefined, 'attention']]) {
+  // rate_limit can open Claude's usage-limit menu or an auto-continue wait; invalid_request covers a context that needs /compact.
+  for (const [error, expected] of [['overloaded', 'ready'], [{ type: 'server_error' }, 'ready'], ['max_output_tokens', 'ready'], ['rate_limit', 'attention'], ['invalid_request', 'attention'], ['billing_error', 'attention'], ['authentication_failed', 'attention'], [undefined, 'attention']]) {
     const claude = fixture(t);
     claude.emit('SessionStart'); claude.emit('UserPromptSubmit', { prompt: 'Task' }); claude.emit('StopFailure', { error });
     assert.equal(claude.receipt('request').status, 'failed', JSON.stringify(error));
+    if (error) assert.match(claude.receipt('request').error, new RegExp(typeof error === 'string' ? error : error.type), 'The request keeps the failure.');
     assert.equal(claude.session().status, expected, JSON.stringify(error));
+    assert.equal(claude.session().error, expected === 'ready' ? null : 'STOPFAILURE');
   }
 });
 
@@ -168,31 +171,77 @@ test('acknowledgement age counts from this run\'s delivery, and a superseded unc
   emit('SessionStart');
   const svc = service(store, { home, startupTimeout: 1000 });
   svc.refresh();
-  assert.notEqual(session().error, 'PROMPT_NOT_ACKNOWLEDGED', 'A relaunched request is not an hour late.');
-  store.run("UPDATE requests SET status = 'uncertain', created_at = ?, delivered_at = NULL WHERE request_id = 'request'", old);
+  assert.equal(session().error, null, 'A relaunched request is not an hour late.');
   store.run('UPDATE runs SET started_at = ? WHERE id = ?', old, 'run');
+  store.run('UPDATE requests SET delivered_at = ? WHERE request_id = ?', old, 'request');
+  svc.refresh();
+  assert.equal(session().error, 'PROMPT_NOT_ACKNOWLEDGED', 'An old delivery in this run still asks the human to check.');
+  store.run("UPDATE requests SET status = 'uncertain', delivered_at = NULL WHERE request_id = 'request'");
+  store.run("UPDATE sessions SET status = 'running', error = NULL WHERE id = 'session'");
   svc.refresh();
   assert.equal(session().error, 'DELIVERY_UNCERTAIN', 'An unresolved delivery is named accurately.');
-  store.run("UPDATE sessions SET status = 'running', error = NULL WHERE id = 'session'");
-  emit('UserPromptSubmit', { prompt: 'Human typed something else' });
-  svc.refresh();
-  assert.equal(session().status, 'running', 'Once the CLI accepted a later prompt, the old delivery no longer flags the session.');
 });
 
-test('a sticky cwd incident from an older release clears on startup only for runs that began in the project', t => {
-  const { home, store, emit, session } = fixture(t);
-  emit('SessionStart'); emit('UserPromptSubmit', { prompt: 'Task' });
-  store.run("UPDATE runs SET attention = 'HOOK_PROJECT_MISMATCH' WHERE id = 'run'");
-  store.run("UPDATE sessions SET status = 'attention', error = 'HOOK_PROJECT_MISMATCH' WHERE id = 'session'");
-  const svc = service(store, { home });
+// Recreates what releases up to 0.1.3 left behind: a journal whose events after Claude's cd were dropped, the offset past them.
+function legacyRun(t, provider, lines, accepted, incidentAt) {
+  const f = fixture(t, provider);
+  const journal = path.join(f.home, 'runs', 'run', 'events.jsonl');
+  fs.mkdirSync(path.dirname(journal), { recursive: true });
+  const offsets = [], entries = []; let bytes = '';
+  for (const event of lines(f.project)) {
+    const entry = { time: new Date().toISOString(), sessionId: 'session', runId: 'run', provider, event: { session_id: 'native', cwd: f.project, [provider === 'codex' ? 'turn_id' : 'prompt_id']: 'turn', ...event } };
+    offsets.push(Buffer.byteLength(bytes)); entries.push(entry); bytes += JSON.stringify(entry) + '\n';
+  }
+  fs.writeFileSync(journal, bytes);
+  for (const index of accepted) acceptEvent(f.store, f.store.runRecord('run'), entries[index], offsets[index]);
+  f.store.run("UPDATE runs SET offset = ?, attention = 'HOOK_PROJECT_MISMATCH', hooks_ready = 1 WHERE id = 'run'", Buffer.byteLength(bytes));
+  f.store.run("UPDATE sessions SET status = 'attention', error = 'HOOK_PROJECT_MISMATCH' WHERE id = 'session'");
+  f.store.audit('HOOK_PROJECT_MISMATCH', 'session', { runId: 'run', offset: offsets[incidentAt] });
+  return { ...f, journal };
+}
+
+test('a legacy cwd incident clears on startup and the dropped events, including the Stop, are imported again', t => {
+  const f = legacyRun(t, 'claude', project => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' },
+    { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: path.join(project, 'episodes', 'one') }, { hook_event_name: 'Stop', last_assistant_message: 'The real answer', cwd: path.join(project, 'episodes', 'one') }], [0, 1], 2);
+  const svc = service(f.store, { home: f.home });
   svc.recoverCwdIncidents();
-  assert.equal(store.runRecord('run').attention, null);
-  assert.equal(session().status, 'running');
-  assert.equal(session().error, null);
-  const foreign = fixture(t);
-  foreign.emit('SessionStart', { cwd: os.tmpdir() });
-  service(foreign.store, { home: foreign.home }).recoverCwdIncidents();
-  assert.equal(foreign.store.runRecord('run').attention, 'HOOK_PROJECT_MISMATCH', 'A run that never matched keeps its incident.');
+  assert.equal(f.store.runRecord('run').attention, null);
+  svc.refresh();
+  assert.equal(f.receipt('request').status, 'completed');
+  assert.equal(f.receipt('request').response, 'The real answer');
+  assert.equal(f.session().status, 'ready');
+  svc.recoverCwdIncidents();
+  assert.equal(f.store.all("SELECT 1 FROM audit WHERE action = 'cwd_incident_cleared'").length, 1, 'Running again on the next start changes nothing.');
+});
+
+test('startup recovery leaves Codex incidents and first-event incidents alone, and does not replay over later events', t => {
+  const codex = legacyRun(t, 'codex', () => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'Stop', cwd: os.tmpdir() }], [0, 1], 2);
+  service(codex.store, { home: codex.home }).recoverCwdIncidents();
+  assert.equal(codex.store.runRecord('run').attention, 'HOOK_PROJECT_MISMATCH', 'Codex keeps one cwd per session.');
+  const first = legacyRun(t, 'claude', () => [{ hook_event_name: 'SessionStart', cwd: os.tmpdir() }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }], [1], 0);
+  service(first.store, { home: first.home }).recoverCwdIncidents();
+  assert.equal(first.store.runRecord('run').attention, 'HOOK_PROJECT_MISMATCH', 'A foreign first event stays an incident even if a later one matched.');
+  const none = legacyRun(t, 'claude', () => [{ hook_event_name: 'SessionStart', cwd: os.tmpdir() }], [], 0);
+  service(none.store, { home: none.home }).recoverCwdIncidents();
+  assert.equal(none.store.runRecord('run').attention, 'HOOK_PROJECT_MISMATCH', 'Nothing accepted before the incident: not a legacy cd.');
+  const later = legacyRun(t, 'claude', () => [{ hook_event_name: 'SessionStart' }, { hook_event_name: 'UserPromptSubmit', prompt: 'Task' }, { hook_event_name: 'PostToolUse', cwd: os.tmpdir() }, { hook_event_name: 'Stop', last_assistant_message: 'Done' }], [0, 1, 3], 2);
+  service(later.store, { home: later.home }).recoverCwdIncidents();
+  assert.equal(later.store.runRecord('run').attention, null);
+  assert.equal(later.store.runRecord('run').offset, fs.statSync(later.journal).size, 'No replay once later events were accepted.');
+  assert.equal(later.session().status, 'ready');
+});
+
+test('Claude launches register the failure and denial hooks; Codex never receives them', async () => {
+  const { launchCommand } = await import('../../broker/providers.mjs');
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'harbor-hooks-'));
+  try {
+    const config = { home, env: process.env, executables: { claude: fake, codex: fake } };
+    launchCommand({ provider: 'claude', project: home, cli_args: '[]', native_id: randomUUID() }, config, 'Task');
+    const events = Object.keys(JSON.parse(fs.readFileSync(path.join(home, 'claude-hooks.json'), 'utf8')).hooks);
+    for (const name of ['PostToolUseFailure', 'PermissionDenied', 'PermissionRequest', 'Notification', 'StopFailure']) assert.ok(events.includes(name), name);
+    const codex = launchCommand({ provider: 'codex', project: home, cli_args: '[]' }, config, 'Task').args.join(' ');
+    assert.ok(!codex.includes('PostToolUseFailure') && !codex.includes('PermissionDenied'));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 const fake = fileURLToPath(new URL('./fake-cli.mjs', import.meta.url));
@@ -205,18 +254,51 @@ test('end to end: subdirectory cd and an auto-answered permission complete witho
   const config = configuration({ ...process.env, HARBOR_HOME: home });
   const call = (action, args = {}) => rpc(action, args, { config });
   try {
-    for (const [provider, text, response] of [['claude', 'CD_SUBDIR', 'done in sub'], ['codex', 'AUTO_ALLOWED', 'allowed'], ['claude', 'AUTO_ALLOWED', 'allowed']]) {
+    // AUTO_ALLOWED keeps the permission open for 1.5 s, so a wait polling every 200 ms would see any false attention.
+    for (const [provider, text, outcome, response] of [['claude', 'CD_SUBDIR', 'completed', 'done in sub'], ['codex', 'AUTO_ALLOWED', 'completed', 'allowed'], ['claude', 'AUTO_ALLOWED', 'completed', 'allowed'], ['claude', 'CRON', 'completed', 'scheduled'], ['claude', 'FAIL_OVERLOADED', 'failed', null]]) {
       const id = randomUUID();
       await call('create', { id, provider, project, title: text, owner: 'grok', text, requestId: 'r1' });
       const done = await call('wait', { id, requestId: 'r1', timeout: 10000 });
-      assert.equal(done.outcome, 'completed', `${provider} ${text}: ${JSON.stringify(done.session)}`);
+      assert.equal(done.outcome, outcome, `${provider} ${text}: ${JSON.stringify(done.session)}`);
       assert.equal(done.request.response, response);
-      assert.equal(done.session.status, 'ready');
+      assert.equal(done.session.status, 'ready', `${provider} ${text}`);
     }
+    // A turn the human ends with Esc fires no hook; their next prompt closes the bot's request.
+    const id = randomUUID();
+    await call('create', { id, provider: 'claude', project, title: 'Esc', owner: 'grok', text: 'NEVER_STOPS', requestId: 'esc-1' });
+    for (let attempt = 0; attempt < 50 && (await call('result', { id, requestId: 'esc-1' })).request.status !== 'running'; attempt++) await delay(100);
+    const runId = (await call('result', { id })).session.runId;
+    execFileSync(tmux, ['-S', config.tmuxSocket, 'send-keys', '-t', 'harbor-' + runId, '-l', 'Human follow-up']);
+    execFileSync(tmux, ['-S', config.tmuxSocket, 'send-keys', '-t', 'harbor-' + runId, 'Enter']);
+    const superseded = await call('wait', { id, requestId: 'esc-1', timeout: 10000 });
+    assert.equal(superseded.outcome, 'interrupted');
+    assert.equal(superseded.request.error, 'TURN_SUPERSEDED');
   } finally {
     try { process.kill(JSON.parse(fs.readFileSync(path.join(home, 'daemon.lock/owner.json'))).pid, 'SIGTERM'); } catch {}
     try { execFileSync(tmux, ['-S', config.tmuxSocket, 'kill-server'], { stdio: 'ignore' }); } catch {}
     await delay(100);
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('a Codex worktree launched from a repository subfolder is learned at the same position in the new checkout', t => {
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'harbor-subtree-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const repo = path.join(home, 'repo'), project = path.join(repo, 'api'), tree = path.join(home, 'tree');
+  fs.mkdirSync(path.join(project, 'src'), { recursive: true }); fs.writeFileSync(path.join(project, 'src', 'keep'), '');
+  const git = args => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+  git(['init', '-q']); git(['add', '.']); git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init']); git(['worktree', 'add', '-q', '--detach', tree]);
+  const check = cwd => {
+    const store = new Store(path.join(home, randomUUID() + '.sqlite'));
+    try {
+      store.run('INSERT INTO sessions(id,title,provider,project,cli_args,owner,status,run_id,pending,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)', 'session', 'Sub', 'codex', project, '["--worktree"]', 'grok', 'starting', 'run', 1, 'now', 'now');
+      store.run('INSERT INTO runs(id,session_id,tmux_name,started_at) VALUES(?,?,?,?)', 'run', 'session', 'harbor-run', 'now');
+      acceptEvent(store, store.runRecord('run'), { sessionId: 'session', runId: 'run', provider: 'codex', event: { hook_event_name: 'SessionStart', session_id: 'native', cwd } }, 0);
+      return store.session('session').working_directory;
+    } finally { store.close(); }
+  };
+  assert.equal(check(path.join(tree, 'api')), fs.realpathSync(path.join(tree, 'api')));
+  assert.equal(check(tree), fs.realpathSync(tree), 'The checkout root is accepted too.');
+  assert.equal(check(path.join(tree, 'api', 'src')), null, 'A different position inside the checkout is not the worktree.');
+  assert.equal(check(path.join(project, 'src')), null, 'A folder inside the project is not a worktree.');
 });

@@ -6,7 +6,8 @@ import { withoutCodexImagePrefix } from './images.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'interrupted']);
 // StopFailure types after which the CLI is idle at its prompt and nobody has to act: the request records the failure.
-const TRANSIENT_FAILURES = new Set(['overloaded', 'server_error', 'rate_limit', 'max_output_tokens', 'invalid_request']);
+// Not rate_limit (Claude may open its usage-limit menu or auto-continue) nor invalid_request (a full context needs /compact).
+const TRANSIENT_FAILURES = new Set(['overloaded', 'server_error', 'max_output_tokens']);
 const real = directory => { try { return fs.realpathSync(directory); } catch { return path.resolve(directory); } };
 export function importEvents(store, config, run) {
   if (['HOOK_JOURNAL_TRUNCATED', 'HOOK_JOURNAL_CORRUPT', 'HOOK_EVENT_TOO_LARGE'].includes(run.attention)) return;

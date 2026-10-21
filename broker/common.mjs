@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -38,6 +39,23 @@ export function configuration(env = process.env) {
     try { configured = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch (error) { fail('CONFIG_INVALID', `Cannot read ${configFile}: ${error.message}`); }
   }
   return { home, socket, tmuxSocket: path.join(home, 'tmux.sock'), database: path.join(home, 'harbor.sqlite'), env, executables: configured.executables || {}, startupTimeout: 30_000, stopTimeout: 20_000 };
+}
+// A Finder-launched app gets PATH=/usr/bin:/bin:/usr/sbin:/sbin, so hooks and tools that the user's own CLI
+// configuration runs by name (node, python, bun...) would not be found. CLIs get the login shell's PATH instead.
+const PATH_MARK = '__HARBOR_PATH__';
+export function loginShellPath(env = process.env, timeout = 5000) {
+  const shell = env.SHELL && path.isAbsolute(env.SHELL) ? env.SHELL : '/bin/zsh';
+  return new Promise(resolve => {
+    execFile(shell, ['-ilc', `printf '${PATH_MARK}%s${PATH_MARK}' "$PATH"`], { encoding: 'utf8', timeout, env: { ...env, TERM: 'dumb' }, stdio: ['ignore', 'pipe', 'ignore'] }, (error, stdout) => {
+      const found = !error && String(stdout).split(PATH_MARK)[1];
+      resolve(found && found.includes('/') ? found : null);
+    });
+  });
+}
+export function sessionPath(env = process.env, shellPath = null) {
+  const dirs = [shellPath, env.PATH, path.join(os.homedir(), '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
+    .filter(Boolean).flatMap(value => value.split(path.delimiter)).filter(dir => path.isAbsolute(dir));
+  return [...new Set(dirs)].join(path.delimiter);
 }
 export function ensurePrivateHome(config) {
   fs.mkdirSync(config.home, { recursive: true, mode: 0o700 });

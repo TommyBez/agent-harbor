@@ -137,7 +137,15 @@ export class Service {
     if (!run.hooks_ready && this.helperStarted(session, run)) { this.store.run('UPDATE runs SET hooks_ready = 1 WHERE id = ?', run.id); run = this.store.runRecord(run.id); }
     if (pane?.alive) {
       if (!run.hooks_ready) {
-        if (!this.answerStartup(this.store.session(session.id), run) && Date.now() - Math.max(Date.parse(run.started_at), this.trustSeen.get(run.id) || 0) > this.config.startupTimeout) this.store.run("UPDATE sessions SET status = 'attention', error = 'HOOKS_NOT_READY' WHERE id = ? AND (error IS NULL OR error != 'HOOKS_NOT_READY')", session.id);
+        const open = this.answerStartup(this.store.session(session.id), run);
+        // Claude leaves its trust dialog only by trusting the folder ("No" exits), so a dialog seen earlier that is
+        // gone while the CLI runs means trust was recorded, even if a hook fails to report SessionStart.
+        if (!open && run.trust && Date.now() - (this.trustSeen.get(run.id) || 0) > 3000) {
+          this.store.run('UPDATE runs SET hooks_ready = 1 WHERE id = ?', run.id);
+          this.store.audit('trust_helper_dialog_closed', session.id, { helperRunId: run.id });
+          return; // The next refresh ends the helper.
+        }
+        if (!open && Date.now() - Math.max(Date.parse(run.started_at), this.trustSeen.get(run.id) || 0) > this.config.startupTimeout) this.store.run("UPDATE sessions SET status = 'attention', error = 'HOOKS_NOT_READY' WHERE id = ? AND (error IS NULL OR error != 'HOOKS_NOT_READY')", session.id);
       } else if (!this.keys.get(run.id)?.end) {
         // Trust is recorded once the CLI starts. The helper holds no conversation, so ending it loses nothing.
         try { process.kill(pane.pid, 'SIGTERM'); } catch {}
@@ -399,6 +407,7 @@ export class Service {
   }
   async start(s, args, actor, preparedImages) {
     this.authorize(s, actor);
+    await this.config.pathReady; // At most a few seconds, once per controller: CLIs start with the login shell's PATH.
     const inputImages = preparedImages || readImages(args.images);
     const text = validateText(args.text ?? (inputImages.length ? 'Describe the attached images.' : BOOTSTRAP));
     const payloadHash = imagePayloadHash(text, inputImages);

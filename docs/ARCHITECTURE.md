@@ -87,6 +87,7 @@ Harbor launches the installed **interactive** CLIs through argument arrays. It d
 - Codex runs with its normal interactive interface, a selected working directory, an invocation-local observer configuration and an exact `resume` ID when applicable.
 - Claude Code receives a new `--session-id` or exact `--resume` ID and an invocation-local observational hook settings file.
 - The first task is passed as the original CLI's positional prompt, removing the need to type a bootstrap prompt manually. When no task is supplied, a small initialization turn establishes observable readiness.
+- CLIs run with the user's login-shell `PATH`, resolved once per controller start, so hooks, MCP servers and tools that their configuration runs by name work as in a terminal even when the app was opened from Finder. tmux takes a new pane's `PATH` from the creating client, so Harbor sets it there.
 - User login, approval policies, skills, plugins, MCP servers and other CLI settings remain owned by the CLI. Harbor does not write global configuration or grant tool permissions on behalf of the user.
 - Workspace trust is answered in the CLI's own dialog, either by the human from Harbor or automatically inside folders the human pre-authorized. The CLI records the decision itself. See [workspace trust](WORKSPACE-TRUST.md).
 

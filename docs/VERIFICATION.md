@@ -175,6 +175,17 @@ A bot-started Claude Code session with `--worktree` used to exit within a second
 
 The 7 accepted hooks were the invocation-local `<session-flags>` entries for Harbor's observer, not repository hooks. Accepting trust stored the temporary folders in each CLI's own configuration, as pressing the keys would have done. The desktop paths were verified through Native SDK automation with fake providers: the **Trust needed** banner, **Always trust ‹parent›**, **Trust folder** for a Claude worktree session and a Codex session (after Harbor skipped Codex's update notice), and **Trust hooks** for a Codex hook review. Each completed under the original request ID without taking control. Automated checks: **50/50 backend tests** and **24/24 native model tests**, plus markup validation and the native build.
 
+## Uppercase session IDs and login PATH: 2026-10-21 live pass
+
+Grok creates sessions with uppercase UUIDs (`uuidgen` prints them that way), and the observer accepted only lowercase ones, so Harbor never received a hook event for its sessions: `HOOKS_NOT_READY`, and the trust helper never repeated the worktree launch. The observer now accepts either case. The trust helper also continues once the dialog it saw has closed, even without a hook event. Separately, CLIs started from a Finder-launched app had `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, so the user's own hooks that run `node` failed.
+
+Live check with **Claude Code 2.1.302**, a controller started with that minimal `PATH`, an uppercase session ID, `--worktree probe`, a pre-authorized temporary Git fixture and the task "Reply with exactly OK. Do not use tools.":
+- The trust helper accepted trust and repeated the launch.
+- The worktree was recorded and the answer was `OK`.
+- The CLI ran with the login shell's `PATH`.
+
+The only remaining startup message was a prompt-type SessionStart hook from the user's own Claude configuration, which Claude rejects on its own. Automated checks: **58/58 backend tests**.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.

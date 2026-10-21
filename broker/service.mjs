@@ -22,9 +22,8 @@ export class Service {
       if (run.purpose === 'trust') { this.trustHelper(session, run); continue; }
       importEvents(this.store, this.config, run);
       run = this.store.runRecord(session.run_id);
-      const pane = this.pane(run);
-      const alive = !!pane?.alive;
-      if (alive) {
+      const pane = this.livePane(run);
+      if (pane) {
         if (run.pid !== pane.pid || run.pane_id !== pane.id) { this.store.run('UPDATE runs SET pid = ?, pane_id = ? WHERE id = ?', pane.pid, pane.id, run.id); run = this.store.runRecord(run.id); }
         if (run.attention) { this.store.run("UPDATE sessions SET status = 'attention', error = ? WHERE id = ?", run.attention, session.id); }
         const trustOpen = !run.hooks_ready && this.answerStartup(this.store.session(session.id), run);
@@ -58,14 +57,16 @@ export class Service {
   }
   // Startup dialogs shown before Harbor's observation begins. Returns true while the trust dialog is open.
   answerStartup(session, run) {
+    const target = this.terminal(run);
+    if (!target) return false;
     let screen;
-    try { screen = this.tmux.screen(run); } catch { return false; }
+    try { screen = this.tmux.screen(target); } catch { return false; }
     const prompt = trustPrompt(session.provider, screen);
     if (!prompt) {
       this.dialogSince.delete(run.id);
       if (TRUST_ERRORS.has(session.error)) this.store.run("UPDATE sessions SET status = 'starting', error = NULL, updated_at = ? WHERE id = ? AND error IN ('TRUST_REQUIRED','HOOK_TRUST_REQUIRED')", now(), session.id);
       // Codex's update notice blocks a bot-started CLI. Skip it for this launch; never install.
-      if (session.provider === 'codex' && session.owner === 'grok' && UPDATE_NOTICE.test(screen) && this.keystroke(run, 'update', 'Escape')) this.store.audit('update_notice_skipped', session.id, { runId: run.id });
+      if (session.provider === 'codex' && session.owner === 'grok' && UPDATE_NOTICE.test(screen) && this.keystroke(target, 'update', 'Escape')) this.store.audit('update_notice_skipped', session.id, { runId: run.id });
       return false;
     }
     this.trustSeen.set(run.id, Date.now());
@@ -78,10 +79,10 @@ export class Service {
     if (root) {
       // A dialog can render before the CLI reads input; keys sent too early are lost.
       const settled = this.dialogSettled(run);
-      if (settled && prompt.selected === 'accept' && this.keystroke(run, 'accept:' + prompt.kind, 'Enter')) {
+      if (settled && prompt.selected === 'accept' && this.keystroke(target, 'accept:' + prompt.kind, 'Enter')) {
         if (prompt.kind === 'folder') this.store.run("UPDATE runs SET trust = 'accepted' WHERE id = ?", run.id);
         this.store.audit('trust_auto_accepted', session.id, { runId: run.id, kind: prompt.kind, folder, trustedFolder: root });
-      } else if (settled && prompt.selected !== 'accept' && prompt.navigate) this.keystroke(run, 'select:' + prompt.kind, 'Down');
+      } else if (settled && prompt.selected !== 'accept' && prompt.navigate) this.keystroke(target, 'select:' + prompt.kind, 'Down');
       const sent = this.keys.get(run.id);
       if (!settled || (sent?.last && Date.now() - sent.last < 3000)) {
         // Harbor is answering: an earlier startup warning no longer applies.
@@ -106,8 +107,9 @@ export class Service {
   openTrustHelper(session, run) {
     const launchFile = path.join(this.config.home, 'runs', run.id, 'launch.json');
     if (session.provider !== 'claude' || run.hooks_ready || session.working_directory || !usesWorktree(session) || !fs.existsSync(launchFile)) return false;
+    const target = this.terminal(run, { read: true });
     let screen = '';
-    try { screen = this.tmux.capture(run); } catch {}
+    try { if (target) screen = this.tmux.capture(target); } catch {}
     if (!WORKTREE_TRUST_ERROR.test(screen)) return false;
     if (!this.store.get("SELECT 1 FROM requests WHERE run_id = ? AND accepted_at IS NULL AND status = 'awaiting_ack'", run.id)) return false;
     const helper = { id: randomUUID(), started_at: now() };
@@ -132,10 +134,10 @@ export class Service {
     return true;
   }
   trustHelper(session, run) {
-    const pane = this.pane(run);
-    if (pane?.alive && (run.pid !== pane.pid || run.pane_id !== pane.id)) { this.store.run('UPDATE runs SET pid = ?, pane_id = ? WHERE id = ?', pane.pid, pane.id, run.id); run = this.store.runRecord(run.id); }
+    const pane = this.livePane(run);
+    if (pane && (run.pid !== pane.pid || run.pane_id !== pane.id)) { this.store.run('UPDATE runs SET pid = ?, pane_id = ? WHERE id = ?', pane.pid, pane.id, run.id); run = this.store.runRecord(run.id); }
     if (!run.hooks_ready && this.helperStarted(session, run)) { this.store.run('UPDATE runs SET hooks_ready = 1 WHERE id = ?', run.id); run = this.store.runRecord(run.id); }
-    if (pane?.alive) {
+    if (pane) {
       if (!run.hooks_ready) {
         const open = this.answerStartup(this.store.session(session.id), run);
         // Claude leaves its trust dialog only by trusting the folder ("No" exits), so a dialog seen earlier that is
@@ -200,16 +202,25 @@ export class Service {
     });
   }
   forgetLaunch(runId) { fs.rmSync(path.join(this.config.home, 'runs', runId, 'launch.json'), { force: true }); }
+  // tmux pane IDs are unique only while one tmux server runs: after it restarts they begin again at %0, so a
+  // stored ID can name another session's pane. A pane counts for a run only inside the run's own tmux session.
   pane(run) {
     if (!run) return null;
+    if (/^%\d+$/.test(run.pane_id || '')) { const pane = this.panes.get(run.pane_id); return pane?.name === run.tmux_name ? pane : null; }
     // A pane ID recorded under a non-UTF-8 locale may carry tmux's escaped separator; recover from the primary pane.
-    return /^%\d+$/.test(run.pane_id || '') ? this.panes.get(run.pane_id) : [...this.panes.values()].find(p => p.name === run.tmux_name && p.windowIndex === 0 && p.paneIndex === 0);
+    // refresh() then records the recovered ID for a live run.
+    return [...this.panes.values()].find(p => p.name === run.tmux_name && p.windowIndex === 0 && p.paneIndex === 0) || null;
   }
+  // An ended run stays ended, whatever now runs in tmux.
+  livePane(run) { const pane = this.pane(run); return pane?.alive && !run.ended_at ? pane : null; }
+  // The only way input and capture reach tmux: the run with its checked pane. Input needs a live run; reading may
+  // also use the run's own dead pane, such as an ended run's final screen.
+  terminal(run, { read = false } = {}) { const pane = read ? this.pane(run) : this.livePane(run); return pane ? { ...run, pane_id: pane.id } : null; }
   describe(id, compact = false) {
     const s = this.store.session(id);
     const run = this.store.runRecord(s.run_id);
-    const pane = this.pane(run);
-    const result = { id: s.id, title: s.title, provider: s.provider, project: s.project, workingDirectory: s.working_directory || s.project, owner: s.owner, alive: !!pane?.alive,
+    const pane = this.livePane(run);
+    const result = { id: s.id, title: s.title, provider: s.provider, project: s.project, workingDirectory: s.working_directory || s.project, owner: s.owner, alive: !!pane,
       status: s.status, nativeSessionId: s.native_id, pending: !!s.pending, closing: !!s.closing, error: s.error,
       createdAt: s.created_at, updatedAt: s.updated_at, archivedAt: s.archived_at, runId: s.run_id, pid: pane?.pid || run?.pid || null };
     result.trustFolder = s.error === 'TRUST_REQUIRED' ? run?.trust_folder || s.working_directory || s.project : s.error === 'HOOK_TRUST_REQUIRED' ? s.working_directory || s.project : null;
@@ -259,7 +270,7 @@ export class Service {
       return { ok: true, events, nextCursor: events.at(-1)?.seq || after };
     }
     if (action === 'result') return { ok: true, session, request: this.request(args.id, args.requestId) };
-    if (action === 'capture') { const run = this.store.runRecord(session.runId); return { ok: true, session, screen: run && this.pane(run) ? this.tmux.capture(run) : '' }; }
+    if (action === 'capture') { const target = this.terminal(this.store.runRecord(session.runId), { read: true }); return { ok: true, session, screen: target ? this.tmux.capture(target) : '' }; }
     if (action === 'attach-info') { if (!session.alive) fail('SESSION_STOPPED', 'Start the session before attaching.'); return { ok: true, session, command: this.tmux.binary, args: this.tmux.args(this.store.runRecord(session.runId), true) }; }
     if (action === 'wait') {
       const timeout = Number(args.timeout ?? 120000);
@@ -303,7 +314,7 @@ export class Service {
       if (s.archived_at) fail('SESSION_ARCHIVED', 'Archived session cannot change ownership.');
       if (s.owner === 'human' && args.owner === 'grok' && (s.pending || s.closing)) fail('TURN_PENDING', 'Let the human turn finish before returning control to Grok.');
       const run = this.store.runRecord(s.run_id);
-      if (run && run.purpose !== 'trust' && this.pane(run)?.alive) this.tmux.enforce(run, args.owner);
+      if (run && run.purpose !== 'trust' && this.livePane(run)) this.tmux.enforce(run, args.owner);
       this.store.run('UPDATE sessions SET owner = ?, control_epoch = control_epoch + 1, updated_at = ? WHERE id = ?', args.owner, now(), s.id);
       this.store.audit('control_changed', s.id, { from: s.owner, to: args.owner });
       return this.response(s.id);
@@ -331,6 +342,7 @@ export class Service {
       if (this.duplicate(s, requestId, payloadHash)) return this.response(s.id, requestId, { duplicate: true });
       this.canSend(s);
       const run = this.store.runRecord(s.run_id);
+      const target = this.terminal(run) || fail('SESSION_STOPPED', 'Start the CLI before sending.');
       const images = stageImages(this.config, inputImages);
       const prompt = imagePrompt(s.provider, text, images);
       this.store.transaction(() => { this.newRequest(s, run, requestId, prompt, actor, images.length ? 'terminal-images' : 'terminal-paste', payloadHash, images); this.store.run("UPDATE sessions SET pending = 1, status = 'running', updated_at = ? WHERE id = ?", now(), s.id); this.store.audit('send_intent', s.id, { requestId, runId: run.id }); });
@@ -341,12 +353,12 @@ export class Service {
           this.authorize(current, actor);
           if (current.control_epoch !== s.control_epoch) fail('CONTROL_CHANGED', 'Control changed while typing. Review the unsubmitted terminal draft.');
         };
-        if (s.provider === 'codex' && images.length) await this.tmux.pasteImages(run, images, checkControl);
+        if (s.provider === 'codex' && images.length) await this.tmux.pasteImages(target, images, checkControl);
         checkControl();
-        this.tmux.paste(run, prompt);
+        this.tmux.paste(target, prompt);
         await delay(400);
         checkControl();
-        this.tmux.enter(run);
+        this.tmux.enter(target);
         this.store.run("UPDATE requests SET status = 'awaiting_ack', delivered_at = ? WHERE session_id = ? AND request_id = ? AND status = 'delivering'", now(), s.id, requestId);
       } catch (error) { this.uncertain(s.id, requestId, error); throw error; }
       this.refresh(); return this.response(s.id, requestId);
@@ -396,11 +408,11 @@ export class Service {
     for (const run of this.store.all('SELECT * FROM runs WHERE session_id = ? AND ended_at IS NOT NULL AND id != ?', id, current.run_id || '')) {
       const panes = [...this.panes.values()].filter(pane => pane.name === run.tmux_name);
       if (!panes.length || panes.some(pane => pane.alive)) continue;
-      const pane = this.pane(run);
+      const target = this.terminal(run, { read: true });
       try {
         const directory = path.join(this.config.home, 'runs', run.id);
         fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-        if (pane) fs.writeFileSync(path.join(directory, 'final-screen.txt'), this.tmux.capture({ ...run, pane_id: pane.id }), { mode: 0o600 });
+        if (target) fs.writeFileSync(path.join(directory, 'final-screen.txt'), this.tmux.capture(target), { mode: 0o600 });
         if (this.tmux.removeDeadSession(run)) this.store.audit('dead_terminal_pruned', id, { runId: run.id });
       } catch (error) { this.store.audit('dead_terminal_prune_failed', id, { runId: run.id, error: error.message }); }
     }
@@ -456,8 +468,7 @@ export class Service {
     if ((args.actor || 'human') !== 'human') fail('TRUST_HUMAN_ONLY', 'Only the human can trust a folder.');
     if (s.archived_at) fail('SESSION_ARCHIVED', 'Archived sessions cannot be changed.');
     const run = this.store.runRecord(s.run_id);
-    const pane = run && this.pane(run);
-    const live = pane?.alive ? { ...run, pane_id: pane.id } : null;
+    const live = run && this.terminal(run);
     const read = () => { try { return live ? trustPrompt(s.provider, this.tmux.screen(live)) : null; } catch { return null; } };
     let prompt = read();
     if (!prompt) fail('TRUST_PROMPT_ABSENT', 'No trust prompt is waiting in this session.');
@@ -494,7 +505,7 @@ export class Service {
     const run = this.store.runRecord(s.run_id);
     if (!run?.ended_at) return false;
     let screen = '';
-    try { const pane = this.pane(run); if (pane) screen = this.tmux.capture({ ...run, pane_id: pane.id }); } catch {}
+    try { const target = this.terminal(run, { read: true }); if (target) screen = this.tmux.capture(target); } catch {}
     if (!screen) try { screen = fs.readFileSync(path.join(this.config.home, 'runs', run.id, 'final-screen.txt'), 'utf8'); } catch {}
     return WORKTREE_TRUST_ERROR.test(screen);
   }
@@ -504,19 +515,20 @@ export class Service {
     this.store.audit('delivery_uncertain', id, { requestId, error: error.message });
   }
   async stop(s, actor) {
-    if (!this.describe(s.id).alive) return this.response(s.id);
     const run = this.store.runRecord(s.run_id);
+    const target = this.terminal(run);
+    if (!target) return this.response(s.id);
     if (!s.closing) {
       this.canSend(s);
       this.store.run('UPDATE sessions SET closing = 1, updated_at = ? WHERE id = ?', now(), s.id);
       this.store.audit('stop_intent', s.id, { runId: run.id, pid: run.pid });
-      this.tmux.exit(run);
+      this.tmux.exit(target);
     }
     await delay(400);
     const currentOwner = this.store.session(s.id);
     this.authorize(currentOwner, actor);
     if (currentOwner.control_epoch !== s.control_epoch) fail('CONTROL_CHANGED', 'Control changed during closure. Review the terminal before retrying.');
-    this.tmux.enter(run);
+    this.tmux.enter(target);
     const deadline = Date.now() + this.config.stopTimeout;
     do {
       await delay(200); this.refresh();

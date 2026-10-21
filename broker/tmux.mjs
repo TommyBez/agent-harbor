@@ -46,6 +46,7 @@ export class Tmux {
     const [paneId, pid] = result.split(FIELD);
     return { paneId, pid: Number(pid) };
   }
+  // Input and capture take the run with the pane ID that Service.terminal() checked against the run's own session.
   paste(run, text) {
     const buffer = 'harbor-' + run.id;
     this.call(['load-buffer', '-b', buffer, '-'], { input: text });

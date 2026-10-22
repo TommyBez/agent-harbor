@@ -17,7 +17,19 @@ harbor create --provider claude --project "$PWD" --title "Review" \
 
 Use either the JSON form or the repeated form. Arguments are supplied at creation, persisted with the conversation and reapplied when it starts or resumes. Harbor does not offer an operation to rewrite an existing session's startup configuration. Native interactive commands such as `/model` remain available in the terminal.
 
-`result SESSION_ID` includes `session.cliArgs` and `session.workingDirectory`. `project` is the original selected project; `workingDirectory` can be a managed worktree.
+`result SESSION_ID` includes `session.cliArgs` and `session.workingDirectory`. `project` is the original selected project; `workingDirectory` can be a managed worktree. `list --compact` includes `cliArgs` only for sessions that have startup arguments.
+
+## Desktop form
+
+The new-session form offers Model, Effort and Worktree above the additional JSON arguments. Each starts at **CLI default**, which adds nothing, so the CLI's own configuration decides. A choice becomes the provider's own option, placed before the JSON arguments and checked by the same allowlist:
+
+| Field | Claude Code | Codex |
+|---|---|---|
+| Model (free text) | `--model NAME` | `--model NAME` |
+| Effort | `--effort low\|medium\|high\|xhigh\|max` | `-c model_reasoning_effort="minimal\|low\|medium\|high\|xhigh"` |
+| Worktree: New worktree | `--worktree` | `--worktree` |
+
+Harbor does not ask the CLIs for a model catalog; the field suggests the models used before with that provider. If the JSON also sets one of these options, the form asks to keep only one. The app remembers the last provider and, for each provider, the last model, effort and worktree choice in `ui-new-session.json` next to its other local state. **New session like this** in a session's context menu opens the form with that session's provider, original project and startup arguments, split back into these fields where they match.
 
 ## Supported options and boundaries
 
@@ -53,7 +65,7 @@ The desktop client can write a private JSON request and use a short command:
 harbor create --request-file /private/path/request.json
 ```
 
-The file contains a JSON object with the normal create fields: `id`, `requestId`, `provider`, `project`, `title`, `owner`, `text`, and `cliArgs`. A stable UUID in `id` and a stable `requestId` allow retry without creating another conversation or delivering another first prompt.
+The file contains a JSON object with the normal create fields: `id`, `requestId`, `provider`, `project`, `title`, `owner`, `text`, `cliArgs` and `start`. `start: true` (or `create --start`) launches the CLI even without a task, with Harbor's small initialization turn. Without `title`, the session is named from its first task (first meaningful line, at most 60 characters, image mentions removed) or else its folder. A stable UUID in `id` and a stable `requestId` allow retry without creating another conversation or delivering another first prompt.
 
 `--request-file` is exclusive: it cannot be combined with other arguments. The file must be a regular file, not a symbolic link, and must not exceed 128 KiB. Unknown fields are rejected. Harbor reads it without shell interpretation and leaves it available for retry. The caller owns removal and should keep it in a private directory because it contains the task text.
 

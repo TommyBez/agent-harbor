@@ -578,3 +578,234 @@ test "a session recovered without a confirmed turn says so and keeps take contro
     try std.testing.expect(std.mem.startsWith(u8,model.attentionHint(),"After the update"));
     try std.testing.expect(!model.trustNeeded());
 }
+
+const CreateRequest = struct { cliArgs: []const []const u8, title: ?[]const u8 = null, text: ?[]const u8 = null, start: bool = false, provider: []const u8, project: []const u8 };
+fn createRequest(fx: *main.Effects) !std.json.Parsed(CreateRequest) {
+    const write=fx.pendingFileAt(0) orelse return error.NoRequest;
+    try std.testing.expectEqual(@as(u64,108),write.key);
+    return std.json.parseFromSlice(CreateRequest,std.testing.allocator,write.bytes,.{.ignore_unknown_fields=true,.allocate=.alloc_always});
+}
+fn expectArgs(expected: []const []const u8, actual: []const []const u8) !void {
+    try std.testing.expectEqual(expected.len,actual.len);
+    for(expected,actual)|e,a| try std.testing.expectEqualStrings(e,a);
+}
+fn created(model: *main.Model, fx: *main.Effects, output: []const u8) void {
+    completeEffect(model,fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    completeEffect(model,fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output=output}});
+}
+
+test "create and start another keeps agent, project, name and options, clears only the task and refocuses it" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,"{\"sessions\":[{\"id\":\"a\",\"title\":\"A\",\"provider\":\"claude\",\"project\":\"/work/shop\"}]}");
+    main.update(&model,.new_session,&fx);
+    try std.testing.expect(model.focus_task);
+    try std.testing.expect(model.form_claude);
+    model.prompt_buffer.set("Fix the login redirect loop\nthen add a test");
+    model.title_buffer.set("Bug bash");
+    main.update(&model,.{.pick_model="opus"},&fx);
+    main.update(&model,.{.choose_effort=3},&fx);
+    main.update(&model,.worktree_new,&fx);
+    model.cli_args_buffer.set("[\"--add-dir\",\"/work/shared\"]");
+    main.update(&model,main.onCommand("session.create_another").?,&fx);
+    {
+        const request=try createRequest(&fx);defer request.deinit();
+        try expectArgs(&.{"--model","opus","--effort","high","--worktree","--add-dir","/work/shared"},request.value.cliArgs);
+        try std.testing.expectEqualStrings("Fix the login redirect loop\nthen add a test",request.value.text.?);
+        try std.testing.expectEqualStrings("Bug bash",request.value.title.?);
+        try std.testing.expect(request.value.start);
+    }
+    created(&model,&fx,"{\"ok\":true,\"session\":{\"id\":\"b\",\"title\":\"Bug bash\"}}");
+    try std.testing.expect(model.creating);
+    try std.testing.expectEqualStrings("",model.formPrompt());
+    try std.testing.expectEqualStrings("Bug bash",model.formTitle());
+    try std.testing.expectEqualStrings("/work/shop",model.formProject());
+    try std.testing.expect(model.form_claude);
+    try std.testing.expectEqualStrings("opus",model.formModel());
+    try std.testing.expect(model.formWorktree());
+    try std.testing.expectEqualStrings("[\"--add-dir\",\"/work/shared\"]",model.formCliArgs());
+    try std.testing.expect(model.focus_task);
+    try std.testing.expectEqualStrings("b",model.selectedId());
+    try std.testing.expect(std.mem.indexOf(u8,model.notice(),"Bug bash")!=null);
+    try std.testing.expect(!model.terminalVisible());
+    // The next task, typed while that session was being created, is not cleared by its reply.
+    model.prompt_buffer.set("Add retries to the payment client");
+    main.update(&model,.create_another,&fx);
+    completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    model.prompt_buffer.set("Third task typed early");
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output="{\"ok\":true,\"session\":{\"id\":\"c\",\"title\":\"Bug bash\"}}"}});
+    try std.testing.expectEqualStrings("Third task typed early",model.formPrompt());
+    // A failure keeps the whole draft for a retry of the same creation.
+    main.update(&model,.create_another,&fx);
+    const retry_id=try std.testing.allocator.dupe(u8,model.create_id.text());defer std.testing.allocator.free(retry_id);
+    completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited,.output="{\"ok\":false,\"error\":{\"message\":\"Connection lost\"}}"}});
+    try std.testing.expect(model.creating and model.showFailure());
+    try std.testing.expectEqualStrings("Third task typed early",model.formPrompt());
+    main.update(&model,.create_another,&fx);
+    try std.testing.expectEqualStrings(retry_id,model.create_id.text());
+    // Cmd+Return still closes the form on the new session.
+    completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited}});
+    main.update(&model,.create_session,&fx);
+    created(&model,&fx,"{\"ok\":true,\"session\":{\"id\":\"d\",\"title\":\"Bug bash\"}}");
+    try std.testing.expect(!model.creating);
+    try std.testing.expectEqualStrings("d",model.selectedId());
+    // The shortcut does nothing while the form is closed.
+    main.update(&model,.create_another,&fx);
+    try std.testing.expectEqual(@as(usize,0),fx.pendingFileCount());
+}
+
+test "remembered picks per provider fill the form, follow the agent switch and are saved after a creation" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    main.form_preferences_path="/fixture/ui-new-session.json";defer main.form_preferences_path="";
+    const saved="{\"provider\":\"claude\",\"claude\":{\"model\":\"opus\",\"effort\":\"max\",\"worktree\":true,\"models\":[\"opus\",\"sonnet\",\"-bad\"]},\"codex\":{\"model\":\"gpt-5.1-codex\",\"effort\":\"bogus\",\"models\":[\"gpt-5.1-codex\"]}}";
+    main.update(&model,.{.form_prefs_loaded=.{.key=109,.outcome=.ok,.bytes=saved}},&fx);
+    try loadSnapshot(&model,&fx,"{\"sessions\":[]}");
+    // Without a selected session, the form opens on the last agent used.
+    main.update(&model,.new_session,&fx);
+    try std.testing.expect(model.form_claude);
+    try std.testing.expectEqualStrings("opus",model.formModel());
+    try std.testing.expect(model.formWorktree());
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    const efforts=model.effortOptions(arena.allocator());
+    try std.testing.expectEqual(@as(usize,6),efforts.len);
+    try std.testing.expect(efforts[5].chosen);
+    try std.testing.expectEqualStrings("Max",efforts[5].label);
+    const history=model.modelHistory(arena.allocator());
+    try std.testing.expectEqual(@as(usize,2),history.len);
+    try std.testing.expect(history[0].chosen and !history[1].chosen);
+    try std.testing.expect(std.mem.indexOf(u8,model.launchPreview(arena.allocator()),"--model opus --effort max --worktree")!=null);
+    main.update(&model,.{.choose_provider="codex"},&fx);
+    try std.testing.expectEqualStrings("gpt-5.1-codex",model.formModel());
+    try std.testing.expect(model.effortOptions(arena.allocator())[0].chosen);
+    try std.testing.expectEqualStrings("Minimal",model.effortOptions(arena.allocator())[1].label);
+    try std.testing.expect(!model.formWorktree());
+    // A new model and a Codex effort reach the CLI as its own options.
+    model.drafts[0].model.set("gpt-5.2");
+    main.update(&model,.{.choose_effort=4},&fx);
+    model.project_buffer.set("/work/api");
+    main.update(&model,.create_session,&fx);
+    {
+        const request=try createRequest(&fx);defer request.deinit();
+        try std.testing.expectEqualStrings("codex",request.value.provider);
+        try expectArgs(&.{"--model","gpt-5.2","-c","model_reasoning_effort=\"high\""},request.value.cliArgs);
+        try std.testing.expect(request.value.title==null and request.value.text==null and request.value.start);
+    }
+    completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output="{\"ok\":true,\"session\":{\"id\":\"new\",\"title\":\"api\"}}"}});
+    var written:?[]const u8=null;
+    for(0..fx.pendingFileCount())|i| { const f=fx.pendingFileAt(i).?; if(f.key==110){ try std.testing.expectEqualStrings("/fixture/ui-new-session.json",f.path); written=f.bytes; } }
+    const bytes=try std.testing.allocator.dupe(u8,written.?);defer std.testing.allocator.free(bytes);
+    const Saved=struct{provider:[]const u8,codex:struct{model:[]const u8,effort:[]const u8,worktree:bool,models:[]const []const u8},claude:struct{model:[]const u8,effort:[]const u8,worktree:bool,models:[]const []const u8}};
+    const parsed=try std.json.parseFromSlice(Saved,std.testing.allocator,bytes,.{});defer parsed.deinit();
+    try std.testing.expectEqualStrings("codex",parsed.value.provider);
+    try std.testing.expectEqualStrings("gpt-5.2",parsed.value.codex.model);
+    try std.testing.expectEqualStrings("high",parsed.value.codex.effort);
+    try expectArgs(&.{"gpt-5.2","gpt-5.1-codex"},parsed.value.codex.models);
+    try std.testing.expectEqualStrings("max",parsed.value.claude.effort);
+    try std.testing.expect(parsed.value.claude.worktree);
+    try expectArgs(&.{"opus","sonnet"},parsed.value.claude.models);
+    // A restarted app reading that file opens the same picks.
+    var fresh:main.Model=.{};defer fresh.deinit();
+    main.update(&fresh,.{.form_prefs_loaded=.{.key=109,.outcome=.ok,.bytes=bytes}},&fx);
+    main.update(&fresh,.new_session,&fx);
+    try std.testing.expect(!fresh.form_claude);
+    try std.testing.expectEqualStrings("gpt-5.2",fresh.formModel());
+    try std.testing.expect(fresh.effortOptions(arena.allocator())[4].chosen);
+}
+
+test "new session like this prefills agent, project and stored arguments into the structured fields" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    try loadSnapshot(&model,&fx,
+        \\{"sessions":[{"id":"a","title":"A","provider":"codex","project":"/work/api","alive":true,"status":"ready"},
+        \\{"id":"b","title":"B","provider":"claude","project":"/work/shop","workingDirectory":"/work/shop-tree","cliArgs":["--model","opus","--effort","high","--worktree","--add-dir","/work/shared","--verbose"]},
+        \\{"id":"c","title":"C","provider":"codex","project":"/work/api","cliArgs":["-m","gpt-5.2","-c","model_reasoning_effort=\"low\"","--worktree","--search"]},
+        \\{"id":"d","title":"D","provider":"claude","project":"/work/shop","cliArgs":["--worktree","feature-x","--effort","ultra"]}]}
+    );
+    try std.testing.expectEqualStrings("a",model.selectedId());
+    main.update(&model,.{.row_like="b"},&fx);
+    try std.testing.expectEqualStrings("b",model.selectedId());
+    try std.testing.expect(model.creating and model.form_claude);
+    try std.testing.expectEqualStrings("/work/shop",model.formProject());
+    try std.testing.expectEqualStrings("opus",model.formModel());
+    try std.testing.expect(model.drafts[1].effort==3 and model.formWorktree());
+    try std.testing.expectEqualStrings("[\"--add-dir\",\"/work/shared\",\"--verbose\"]",model.formCliArgs());
+    try std.testing.expect(model.advanced);
+    try std.testing.expectEqualStrings("",model.formPrompt());
+    try std.testing.expectEqualStrings("",model.formTitle());
+    main.update(&model,.create_session,&fx);
+    {
+        const request=try createRequest(&fx);defer request.deinit();
+        try expectArgs(&.{"--model","opus","--effort","high","--worktree","--add-dir","/work/shared","--verbose"},request.value.cliArgs);
+        try std.testing.expectEqualStrings("/work/shop",request.value.project);
+    }
+    completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited}});
+    main.update(&model,.cancel_form,&fx);
+    main.update(&model,.{.row_like="c"},&fx);
+    try std.testing.expect(!model.form_claude);
+    try std.testing.expectEqualStrings("gpt-5.2",model.formModel());
+    try std.testing.expect(model.drafts[0].effort==2 and model.formWorktree());
+    try std.testing.expectEqualStrings("[\"--search\"]",model.formCliArgs());
+    // A named Claude worktree and an unknown level stay literal arguments.
+    main.update(&model,.cancel_form,&fx);
+    main.update(&model,.{.row_like="d"},&fx);
+    try std.testing.expect(!model.formWorktree() and model.drafts[1].effort==0);
+    try std.testing.expectEqualStrings("[\"--worktree\",\"feature-x\",\"--effort\",\"ultra\"]",model.formCliArgs());
+    // A session without arguments opens with remembered picks and no additional arguments.
+    main.update(&model,.cancel_form,&fx);
+    main.update(&model,.{.row_like="a"},&fx);
+    try std.testing.expectEqualStrings("",model.formCliArgs());
+    try std.testing.expect(!model.advanced);
+}
+
+test "structured options never set an option twice and a blank task starts without filler text" {
+    var model:main.Model=.{};defer model.deinit();
+    var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
+    main.update(&model,.{.choose_provider="codex"},&fx);
+    main.update(&model,.new_session,&fx);
+    model.project_buffer.set("/work/api");
+    const conflicts=[_]struct{field:enum{model,effort,worktree},json:[]const u8}{
+        .{.field=.model,.json="[\"-m\",\"other\"]"}, .{.field=.model,.json="[\"--model=other\"]"},
+        .{.field=.effort,.json="[\"-c\",\"model_reasoning_effort=low\"]"}, .{.field=.effort,.json="[\"--config=model_reasoning_effort = 'low'\"]"},
+        .{.field=.worktree,.json="[\"--worktree\"]"},
+    };
+    for(conflicts)|c| {
+        model.drafts[0]=.{};
+        switch(c.field){ .model=>model.drafts[0].model.set("gpt-5.2"), .effort=>model.drafts[0].effort=3, .worktree=>model.drafts[0].worktree=true }
+        model.cli_args_buffer.set(c.json);
+        main.update(&model,.create_session,&fx);
+        try std.testing.expectEqual(@as(usize,0),fx.pendingFileCount());
+        try std.testing.expect(model.showFailure() and std.mem.indexOf(u8,model.notice(),"set twice")!=null);
+        try std.testing.expect(!model.busy);
+    }
+    model.drafts[0]=.{};model.drafts[0].model.set("-x");model.cli_args_buffer.clear();
+    main.update(&model,.create_session,&fx);
+    try std.testing.expectEqual(@as(usize,0),fx.pendingFileCount());
+    // Other configuration overrides combine with the fields; a whitespace task is no task.
+    model.drafts[0]=.{};model.drafts[0].effort=1;
+    model.cli_args_buffer.set("[\"-c\",\"model_verbosity=low\"]");
+    model.prompt_buffer.set("  \n ");
+    main.update(&model,.create_session,&fx);
+    const request=try createRequest(&fx);defer request.deinit();
+    try expectArgs(&.{"-c","model_reasoning_effort=\"minimal\"","-c","model_verbosity=low"},request.value.cliArgs);
+    try std.testing.expect(request.value.text==null and request.value.start);
+}
+
+test "the name placeholder previews the broker's task-derived title" {
+    var arena=std.heap.ArenaAllocator.init(std.testing.allocator);defer arena.deinit();
+    const Fixture=struct{cases:[]const struct{text:[]const u8,title:[]const u8}};
+    const fixture=try std.json.parseFromSliceLeaky(Fixture,arena.allocator(),@embedFile("fixtures/task-titles.json"),.{.ignore_unknown_fields=true});
+    try std.testing.expect(fixture.cases.len>10);
+    for(fixture.cases)|c| try std.testing.expectEqualStrings(c.title,main.taskTitle(arena.allocator(),c.text));
+    var model:main.Model=.{};defer model.deinit();
+    model.project_buffer.set("/work/shop/");
+    try std.testing.expectEqualStrings("Default: shop",model.titlePlaceholder(arena.allocator()));
+    model.prompt_buffer.set("[Image #1]\n  Fix the login   redirect loop\nand add a test");
+    try std.testing.expectEqualStrings("Default: Fix the login redirect loop",model.titlePlaceholder(arena.allocator()));
+    model.project_buffer.clear();model.prompt_buffer.clear();
+    try std.testing.expectEqualStrings("e.g. Checkout review",model.titlePlaceholder(arena.allocator()));
+}

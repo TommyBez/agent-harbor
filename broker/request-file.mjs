@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { fail } from './common.mjs';
 
-const createKeys = new Set(['id','requestId','provider','project','title','owner','text','cliArgs','images']);
+const createKeys = new Set(['id','requestId','provider','project','title','owner','text','cliArgs','images','start']);
 const turnKeys = new Set(['id','requestId','actor','text','images']);
 export function readRequest(filename, action = 'create') {
   if (!['create','send','start','resume'].includes(action)) fail('REQUEST_FILE_INVALID', 'Request files support create, send, start and resume.');

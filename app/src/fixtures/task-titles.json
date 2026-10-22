@@ -1,0 +1,65 @@
+{
+  "comment": "Session names derived from a first task. broker/service.mjs taskTitle and the desktop form's preview (app/src/main.zig) must both produce these.",
+  "cases": [
+    {
+      "text": "Fix the login redirect loop on Safari",
+      "title": "Fix the login redirect loop on Safari"
+    },
+    {
+      "text": "  Refactor   the\tcheckout  service  ",
+      "title": "Refactor the checkout service"
+    },
+    {
+      "text": "\n\n# Plan\n- refactor checkout",
+      "title": "Plan"
+    },
+    {
+      "text": "---\n\n- Add retries to the payment client",
+      "title": "Add retries to the payment client"
+    },
+    {
+      "text": "> **Note**\r\nship it",
+      "title": "**Note**"
+    },
+    {
+      "text": "[Image #1] [Image #2] What is wrong here?",
+      "title": "What is wrong here?"
+    },
+    {
+      "text": "@\"/tmp/shots/a b.png\"\n\nExplain this screenshot",
+      "title": "Explain this screenshot"
+    },
+    {
+      "text": "Compare @before.PNG with @src/app.ts",
+      "title": "Compare with @src/app.ts"
+    },
+    {
+      "text": "Refactor the checkout service so that payment retries use exponential backoff with jitter",
+      "title": "Refactor the checkout service so that payment retries use…"
+    },
+    {
+      "text": "Make the build, the tests, and the linter all pass again on main, please",
+      "title": "Make the build, the tests, and the linter all pass again on…"
+    },
+    {
+      "text": "Update the onboarding copy for billing and settings pages, then the emails too",
+      "title": "Update the onboarding copy for billing and settings pages…"
+    },
+    {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    },
+    {
+      "text": "Résumé générateur: corrige l’accent dans les en-têtes des factures PDF exportées",
+      "title": "Résumé générateur: corrige l’accent dans les en-têtes des…"
+    },
+    {
+      "text": "   \n---\n***",
+      "title": ""
+    },
+    {
+      "text": "[Image #1]",
+      "title": ""
+    }
+  ]
+}

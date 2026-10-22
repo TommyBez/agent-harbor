@@ -209,6 +209,30 @@ Automated checks: **76/76 backend tests**, including end-to-end fake-CLI runs fo
 
 Not verified live: Claude's real `permission_prompt` timing, an Esc interrupt on the real CLI, Codex auto-review.
 
+## Starting several sessions: 2026-10-22
+
+The new-session form gained Create and start another (Cmd+Shift+Return), Model, Effort and Worktree fields with remembered per-provider picks, New session like this, and task-derived session names (schema version 6 records `title_source`).
+
+Automated checks: **85/85 backend tests** and **30/30 native model tests**, markup check and an automation-enabled ReleaseFast build. The backend tests cover:
+- title derivation from a fixture shared with the form's preview;
+- an unchanged prompt and payload hash;
+- `title_source` for folder, task and rename, and the version-5 migration;
+- `start` without a task;
+- every option the form compiles passing the startup-argument allowlist.
+
+The [isolated desktop smoke](#isolated-desktop-ui-smoke-8-checks-passed) passed its 8 checks on the new form. Its first run failed because the taller form pushed Create and start below a 949-point window; the actions now sit in a fixed footer.
+
+A second run on the same isolated home drove the real UI through Native SDK automation with the fake Codex provider:
+- the name field previewed "Fix the login redirect loop" from a task that started with an image marker;
+- Model, Effort and Worktree showed and sent `--model gpt-5.2 -c model_reasoning_effort="high" --worktree`;
+- the `session.create_another` shortcut created a session with that name and those arguments. The form stayed open on the same agent, project and options, with the task cleared and a keystroke landing in the task field;
+- the Create and start another button did the same, and Create and start closed the form on the new session;
+- all three fake CLIs answered, and the first received its original task text unchanged;
+- New session like this restored the agent, project and options. Switching the agent showed each provider's own picks;
+- after an app restart the form reopened with the remembered picks and model history, and Cmd+Return in the task field created a session.
+
+Not verified: a physical Cmd+Shift+Return keystroke (automation dispatches the registered shortcut event after AppKit's key matching), and real Claude Code or Codex runs with these model, effort and worktree values. The fake provider ignores them.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.

@@ -54,7 +54,7 @@ Shell variables may not survive between your tool calls; restate the paths in ev
 ```
 
 - `--provider` is `claude` or `codex`, chosen from the user's request.
-- `--title` is optional (1–160 characters, default: the project folder name). Use a short description of the task; it is what the human sees in the session list.
+- `--title` is optional (1–160 characters). Without it, Harbor names the session from the first line of `--text` (at most 60 characters), or the project folder when there is no task. Use a short description of the task; it is what the human sees in the session list.
 - `--owner grok` keeps the session yours until the human takes it.
 - `--text` is the first task; without `--text` and images the session is recorded but not started (use `start` later).
 - The reply contains `session` and `request`; `request.status` is usually `awaiting_ack` at this point. That is not an answer yet.
@@ -125,7 +125,7 @@ These commands are always safe, whoever owns the session:
 
 | Command | Returns |
 |---|---|
-| `list --compact` | Every session: `id`, `title`, `provider`, `project`, `owner`, `alive`, `status`, `pending`, `error`, `nativeSessionId`, timestamps. Add `--archived` to include archived sessions |
+| `list --compact` | Every session: `id`, `title`, `provider`, `project`, `owner`, `alive`, `status`, `pending`, `error`, `nativeSessionId`, timestamps, and `cliArgs` when it has startup arguments. Add `--archived` to include archived sessions |
 | `result <id> --request-id <rid>` | The current session plus that request's receipt (`status`, `response`, `error`, `images`) |
 | `capture <id>` | `screen`: the current terminal text. Use it to diagnose or to tell the user what a prompt asks; it is never proof that your task completed |
 | `events <id> [--after <cursor>]` | Up to 200 observed CLI events and a `nextCursor` |

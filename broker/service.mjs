@@ -291,8 +291,6 @@ export class Service {
       createdAt: s.created_at, updatedAt: s.updated_at, archivedAt: s.archived_at, runId: s.run_id, pid: pane?.pid || run?.pid || null };
     result.trustFolder = s.error === 'TRUST_REQUIRED' ? run?.trust_folder || s.working_directory || s.project : s.error === 'HOOK_TRUST_REQUIRED' ? s.working_directory || s.project : null;
     result.trustParent = result.trustFolder ? parentSuggestion(result.trustFolder) : null;
-    // The desktop list carries startup arguments only when set, so "New session like this" can reuse them.
-    if (compact && s.cli_args && s.cli_args !== '[]') result.cliArgs = JSON.parse(s.cli_args);
     if (!compact) Object.assign(result, { cliArgs: JSON.parse(s.cli_args || '[]'), titleSource: s.title_source, hooksReady: !!run?.hooks_ready, lastResponse: s.last_response, lastResponseAt: s.last_response_at,
       attachCommand: process.execPath, attachArgs: [CLI, 'attach', id], terminal: run ? { command: this.tmux.binary, args: this.tmux.args(run, s.owner !== 'human' && run.purpose !== 'trust') } : null });
     return result;
@@ -307,7 +305,7 @@ export class Service {
   response(id, requestId, extra = {}) { return { ok: true, session: this.describe(id), ...(requestId ? { request: this.request(id, requestId) } : {}), ...extra }; }
   async execute(action, args = {}) {
     if (args.images !== undefined && !['create','start','resume','send'].includes(action)) fail('INVALID_IMAGES', 'Images are supported by create, start, resume and send only.');
-    if (['watch', 'list', 'result', 'capture', 'doctor', 'attach-info', 'wait', 'events'].includes(action)) return this.read(action, args);
+    if (['watch', 'list', 'result', 'cli-args', 'capture', 'doctor', 'attach-info', 'wait', 'events'].includes(action)) return this.read(action, args);
     if (action === 'control') return this.mutate(action, args);
     if (action === 'trusted-folders') return this.trustedFolders(args);
     const key = args.id || 'create';
@@ -338,6 +336,8 @@ export class Service {
       return { ok: true, events, nextCursor: events.at(-1)?.seq || after };
     }
     if (action === 'result') return { ok: true, session, request: this.request(args.id, args.requestId) };
+    // Only what "New session like this" reuses: bounded by the startup-argument limit, unlike a full result with responses.
+    if (action === 'cli-args') return { ok: true, session: { id: session.id, provider: session.provider, project: session.project, cliArgs: session.cliArgs } };
     if (action === 'capture') { const target = this.terminal(this.store.runRecord(session.runId), { read: true }); return { ok: true, session, screen: target ? this.tmux.capture(target) : '' }; }
     if (action === 'attach-info') { if (!session.alive) fail('SESSION_STOPPED', 'Start the session before attaching.'); return { ok: true, session, command: this.tmux.binary, args: this.tmux.args(this.store.runRecord(session.runId), true) }; }
     if (action === 'wait') {
@@ -454,7 +454,10 @@ export class Service {
     if (!UUID.test(id)) fail('INVALID_SESSION_ID', 'Session ID must be a UUID.');
     const existing = this.store.get('SELECT * FROM sessions WHERE id = ?', id);
     if (existing) {
-      if (existing.provider !== args.provider || existing.project !== project || existing.title !== title || existing.cli_args !== JSON.stringify(cliArgs)) fail('SESSION_ID_CONFLICT', 'Session ID already identifies a different session.');
+      // Without a name the title is automatic, and a retry may cross an upgrade that named it differently
+      // (a version-5 controller used the folder), so any automatic name is the same creation.
+      const sameTitle = existing.title === title || (!args.title && existing.title_source !== 'user');
+      if (existing.provider !== args.provider || existing.project !== project || !sameTitle || existing.cli_args !== JSON.stringify(cliArgs)) fail('SESSION_ID_CONFLICT', 'Session ID already identifies a different session.');
       if (hasTask) return this.start(existing, args, owner, inputImages);
       return this.response(id, undefined, { duplicate: true });
     }

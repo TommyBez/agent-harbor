@@ -63,6 +63,20 @@ test('derived titles never change the delivered prompt or its payload hash, and 
     assert.equal(images.session.title, 'shop', 'A task with nothing but image mentions falls back to the folder.');
     assert.equal(images.session.titleSource, 'folder');
 
+    // A version-5 controller named an untitled create after its folder. If its reply was lost, the same create
+    // retried after the upgrade is still that creation: the stored request answers, with no new launch.
+    const legacy = randomUUID();
+    await h.service.execute('create', { id: legacy, requestId: legacy, provider: 'codex', project: h.project, title: 'shop', text: 'Fix the checkout totals' });
+    h.store.run("UPDATE sessions SET title_source = 'folder' WHERE id = ?", legacy); // as the version-6 migration marks it
+    const launched = h.launches.length;
+    const recovered = await h.service.execute('create', { id: legacy, requestId: legacy, provider: 'codex', project: h.project, text: 'Fix the checkout totals' });
+    assert.equal(recovered.duplicate, true);
+    assert.equal(recovered.session.title, 'shop');
+    assert.equal(h.launches.length, launched);
+    // A person's name is part of the identity: an untitled create cannot claim a renamed session.
+    await h.service.execute('rename', { id: legacy, title: 'Checkout totals' });
+    await assert.rejects(h.service.execute('create', { id: legacy, requestId: legacy, provider: 'codex', project: h.project, text: 'Fix the checkout totals' }), { code: 'SESSION_ID_CONFLICT' });
+
     const renamed = await h.service.execute('rename', { id, title: 'Login loop' });
     assert.equal(renamed.session.title, 'Login loop');
     assert.equal(renamed.session.titleSource, 'user');
@@ -70,7 +84,7 @@ test('derived titles never change the delivered prompt or its payload hash, and 
   } finally { h.cleanup(); }
 });
 
-test('start launches a session without a task, and the desktop list carries startup arguments only when set', async () => {
+test('start launches a session without a task, and cli-args returns only what New session like this reuses', async () => {
   const h = harness();
   try {
     const id = randomUUID();
@@ -81,11 +95,15 @@ test('start launches a session without a task, and the desktop list carries star
     assert.match(prompt, /Reply only READY/);
     assert.equal(h.store.request(id, id).payload_hash, hashPayload(prompt));
     assert.equal((await h.service.execute('create', { id, requestId: id, provider: 'claude', project: h.project, start: true, cliArgs: ['--model', 'opus', '--effort', 'high'] })).duplicate, true);
-    await h.service.execute('create', { provider: 'codex', project: h.project });
+    // The desktop list stays within its snapshot budget: startup arguments are read per session, on demand.
     const compact = await h.service.execute('list', { compact: true });
-    assert.deepEqual(compact.sessions.find(s => s.id === id).cliArgs, ['--model', 'opus', '--effort', 'high']);
-    assert.equal('cliArgs' in compact.sessions.find(s => s.id !== id), false);
+    assert.equal('cliArgs' in compact.sessions[0], false);
     assert.equal('titleSource' in compact.sessions[0], false);
+    h.store.run('UPDATE sessions SET last_response = ? WHERE id = ?', 'x'.repeat(1024 * 1024), id);
+    const options = await h.service.execute('cli-args', { id });
+    assert.deepEqual(options.session, { id, provider: 'claude', project: h.project, cliArgs: ['--model', 'opus', '--effort', 'high'] });
+    assert.ok(JSON.stringify(options).length < 1024, 'Responses never travel with the arguments.');
+    await assert.rejects(h.service.execute('cli-args', { id: randomUUID() }), { code: 'SESSION_NOT_FOUND' });
   } finally { h.cleanup(); }
 });
 

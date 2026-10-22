@@ -218,6 +218,8 @@ Automated checks: **85/85 backend tests** and **30/30 native model tests**, mark
 - an unchanged prompt and payload hash;
 - `title_source` for folder, task and rename, and the version-5 migration;
 - `start` without a task;
+- an untitled create retried across the upgrade (a version-5 folder title) answering from its stored request;
+- `cli-args` returning arguments without responses;
 - every option the form compiles passing the startup-argument allowlist.
 
 The [isolated desktop smoke](#isolated-desktop-ui-smoke-8-checks-passed) passed its 8 checks on the new form. Its first run failed because the taller form pushed Create and start below a 949-point window; the actions now sit in a fixed footer.

@@ -62,7 +62,7 @@ pub const Session = struct {
     pid: ?i64 = null,
     createdAt: ?[]const u8 = null,
     updatedAt: ?[]const u8 = null,
-    /// Startup arguments, listed only when the session has some.
+    /// Startup arguments: only `harbor cli-args` sends them, for "New session like this".
     cliArgs: []const []const u8 = &.{},
     pub fn providerName(s: *const Session) []const u8 { return if (eq(s.provider, "claude")) "Claude Code" else "Codex"; }
     pub fn isArchived(s: *const Session) bool { return eq(s.status, "archived"); }
@@ -312,7 +312,7 @@ pub const Model = struct {
     connected: bool = false,
     notice_buffer: canvas.TextBuffer(1536) = .{},
     notice_kind: NoticeKind = .info,
-    action: enum { other, create, start, control, external, stop, archive, restore, rename, trust } = .other,
+    action: enum { other, create, start, control, external, stop, archive, restore, rename, trust, like } = .other,
     attached_id: canvas.TextBuffer(64) = .{},
     attached_run_id: canvas.TextBuffer(64) = .{},
     attached: bool = false,
@@ -828,9 +828,9 @@ fn prefillOptions(m: *Model, claude: bool, args: []const []const u8) void {
     m.cli_args_buffer.set(json);
     m.advanced = true;
 }
-const FormOpening = enum { blank, claude, codex, like };
+const FormOpening = union(enum) { blank, claude, codex, like: Session };
 /// Opens the form on the selected session's agent and project with each provider's remembered picks.
-/// "Like this" also takes the selected session's startup arguments.
+/// "Like this" takes agent, project and startup arguments from that session's `harbor cli-args` reply.
 fn openForm(m: *Model, fx: *Effects, opening: FormOpening) void {
     if (m.busy) return;
     m.creating = true; m.renaming = false; m.advanced = false; m.create_another = false; clearCreateIntent(m);
@@ -840,7 +840,7 @@ fn openForm(m: *Model, fx: *Effects, opening: FormOpening) void {
     switch (opening) {
         .claude => m.form_claude = true,
         .codex => m.form_claude = false,
-        .like => if (m.selected()) |s| prefillOptions(m, m.form_claude, s.cliArgs),
+        .like => |s| { m.project_buffer.set(s.project); m.form_claude = eq(s.provider, "claude"); prefillOptions(m, m.form_claude, s.cliArgs); },
         .blank => {},
     }
     m.focus_task = true;
@@ -1017,7 +1017,8 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .new_session => openForm(m, fx, .blank),
         .new_claude => openForm(m, fx, .claude),
         .new_codex => openForm(m, fx, .codex),
-        .new_like => openForm(m, fx, .like),
+        // The list omits startup arguments to stay within its snapshot budget; read this session's on demand.
+        .new_like => { if (!m.hasSelection() or m.busy) return; m.action = .like; run(m, fx, &.{ "cli-args", m.selectedId() }); },
         .cancel_form => { if (m.busy) return; m.creating = false; clearCreateIntent(m); m.focus_terminal = true; syncTerminal(m, fx); },
         .title_edit => |e| m.title_buffer.apply(e), .project_edit => |e| m.project_buffer.apply(e), .prompt_edit => |e| m.prompt_buffer.apply(e),
         .cli_args_edit => |e| m.cli_args_buffer.apply(e), .toggle_advanced => m.advanced = !m.advanced,
@@ -1078,6 +1079,12 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
             var started: []const u8 = "Session started.";
             if (parsed) |p| {
                 defer p.deinit();
+                if (m.action == .like) {
+                    const source = p.value.session orelse { failure(m, fx, "Could not read that session's options. Try again."); return; };
+                    // Selecting another session meanwhile drops the reply.
+                    if (eq(source.id, m.operation_session.text()) and eq(source.id, m.selectedId())) openForm(m, fx, .{ .like = source });
+                    return;
+                }
                 if (m.action == .create) {
                     const created = p.value.session orelse { failure(m, fx, "Incomplete response. Retry to check the same creation."); return; };
                     rememberPicks(m, fx);
@@ -1109,7 +1116,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
                 .restore => "Session restored.",
                 .rename => "Name updated.",
                 .trust => "Trusted. The session continues on its own.",
-                .other => "Operation completed.",
+                .other, .like => "Operation completed.",
             });
             if (m.action == .control) m.focus_terminal = true;
         },

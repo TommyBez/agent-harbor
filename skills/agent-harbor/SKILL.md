@@ -125,7 +125,7 @@ These commands are always safe, whoever owns the session:
 
 | Command | Returns |
 |---|---|
-| `list --compact` | Every session: `id`, `title`, `provider`, `project`, `owner`, `alive`, `status`, `pending`, `error`, `nativeSessionId`, timestamps, and `cliArgs` when it has startup arguments. Add `--archived` to include archived sessions |
+| `list --compact` | Every session: `id`, `title`, `provider`, `project`, `owner`, `alive`, `status`, `pending`, `error`, `nativeSessionId`, timestamps. Add `--archived` to include archived sessions |
 | `result <id> --request-id <rid>` | The current session plus that request's receipt (`status`, `response`, `error`, `images`) |
 | `capture <id>` | `screen`: the current terminal text. Use it to diagnose or to tell the user what a prompt asks; it is never proof that your task completed |
 | `events <id> [--after <cursor>]` | Up to 200 observed CLI events and a `nextCursor` |

@@ -716,19 +716,29 @@ test "remembered picks per provider fill the form, follow the agent switch and a
     try std.testing.expect(fresh.effortOptions(arena.allocator())[4].chosen);
 }
 
+/// Asks for a row's startup arguments as "New session like this" does, then answers with the controller's reply.
+fn likeThis(model: *main.Model, fx: *main.Effects, id: []const u8, reply: []const u8) !void {
+    main.update(model,.{.row_like=id},fx);
+    try std.testing.expect(!model.creating and model.busy);
+    const request=fx.pendingSpawnAt(fx.pendingSpawnCount()-1).?;
+    try std.testing.expectEqualStrings("cli-args",request.argv[2]);
+    try std.testing.expectEqualStrings(id,request.argv[3]);
+    completeEffect(model,fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output=reply}});
+}
+
 test "new session like this prefills agent, project and stored arguments into the structured fields" {
     var model:main.Model=.{};defer model.deinit();
     var fx=main.Effects.init(std.testing.allocator);defer fx.deinit();fx.executor=.fake;
     try loadSnapshot(&model,&fx,
         \\{"sessions":[{"id":"a","title":"A","provider":"codex","project":"/work/api","alive":true,"status":"ready"},
-        \\{"id":"b","title":"B","provider":"claude","project":"/work/shop","workingDirectory":"/work/shop-tree","cliArgs":["--model","opus","--effort","high","--worktree","--add-dir","/work/shared","--verbose"]},
-        \\{"id":"c","title":"C","provider":"codex","project":"/work/api","cliArgs":["-m","gpt-5.2","-c","model_reasoning_effort=\"low\"","--worktree","--search"]},
-        \\{"id":"d","title":"D","provider":"claude","project":"/work/shop","cliArgs":["--worktree","feature-x","--effort","ultra"]}]}
+        \\{"id":"b","title":"B","provider":"claude","project":"/work/shop","workingDirectory":"/work/shop-tree"},
+        \\{"id":"c","title":"C","provider":"codex","project":"/work/api"},{"id":"d","title":"D","provider":"claude","project":"/work/shop"}]}
     );
     try std.testing.expectEqualStrings("a",model.selectedId());
-    main.update(&model,.{.row_like="b"},&fx);
+    // The list carries no startup arguments: the form opens once the controller sends this session's.
+    try likeThis(&model,&fx,"b","{\"ok\":true,\"session\":{\"id\":\"b\",\"provider\":\"claude\",\"project\":\"/work/shop\",\"cliArgs\":[\"--model\",\"opus\",\"--effort\",\"high\",\"--worktree\",\"--add-dir\",\"/work/shared\",\"--verbose\"]}}");
     try std.testing.expectEqualStrings("b",model.selectedId());
-    try std.testing.expect(model.creating and model.form_claude);
+    try std.testing.expect(model.creating and model.form_claude and model.focus_task);
     try std.testing.expectEqualStrings("/work/shop",model.formProject());
     try std.testing.expectEqualStrings("opus",model.formModel());
     try std.testing.expect(model.drafts[1].effort==3 and model.formWorktree());
@@ -736,6 +746,7 @@ test "new session like this prefills agent, project and stored arguments into th
     try std.testing.expect(model.advanced);
     try std.testing.expectEqualStrings("",model.formPrompt());
     try std.testing.expectEqualStrings("",model.formTitle());
+    try std.testing.expect(!model.showNotice() and !model.showFailure());
     main.update(&model,.create_session,&fx);
     {
         const request=try createRequest(&fx);defer request.deinit();
@@ -745,21 +756,31 @@ test "new session like this prefills agent, project and stored arguments into th
     completeEffect(&model,&fx,.{.create_file_saved=.{.key=108,.op=.write,.outcome=.ok}});
     completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited}});
     main.update(&model,.cancel_form,&fx);
-    main.update(&model,.{.row_like="c"},&fx);
+    try likeThis(&model,&fx,"c","{\"ok\":true,\"session\":{\"id\":\"c\",\"provider\":\"codex\",\"project\":\"/work/api\",\"cliArgs\":[\"-m\",\"gpt-5.2\",\"-c\",\"model_reasoning_effort=\\\"low\\\"\",\"--worktree\",\"--search\"]}}");
     try std.testing.expect(!model.form_claude);
     try std.testing.expectEqualStrings("gpt-5.2",model.formModel());
     try std.testing.expect(model.drafts[0].effort==2 and model.formWorktree());
     try std.testing.expectEqualStrings("[\"--search\"]",model.formCliArgs());
     // A named Claude worktree and an unknown level stay literal arguments.
     main.update(&model,.cancel_form,&fx);
-    main.update(&model,.{.row_like="d"},&fx);
+    try likeThis(&model,&fx,"d","{\"ok\":true,\"session\":{\"id\":\"d\",\"provider\":\"claude\",\"project\":\"/work/shop\",\"cliArgs\":[\"--worktree\",\"feature-x\",\"--effort\",\"ultra\"]}}");
     try std.testing.expect(!model.formWorktree() and model.drafts[1].effort==0);
     try std.testing.expectEqualStrings("[\"--worktree\",\"feature-x\",\"--effort\",\"ultra\"]",model.formCliArgs());
     // A session without arguments opens with remembered picks and no additional arguments.
     main.update(&model,.cancel_form,&fx);
-    main.update(&model,.{.row_like="a"},&fx);
+    try likeThis(&model,&fx,"a","{\"ok\":true,\"session\":{\"id\":\"a\",\"provider\":\"codex\",\"project\":\"/work/api\",\"cliArgs\":[]}}");
+    try std.testing.expect(model.creating);
     try std.testing.expectEqualStrings("",model.formCliArgs());
     try std.testing.expect(!model.advanced);
+    // A reply for a session no longer selected opens nothing; a failed read says so and opens nothing.
+    main.update(&model,.cancel_form,&fx);
+    main.update(&model,.{.row_like="b"},&fx);
+    model.selection.set("c");
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=0,.reason=.exited,.output="{\"ok\":true,\"session\":{\"id\":\"b\",\"provider\":\"claude\",\"project\":\"/work/shop\",\"cliArgs\":[]}}"}});
+    try std.testing.expect(!model.creating and !model.busy);
+    main.update(&model,.{.row_like="b"},&fx);
+    completeEffect(&model,&fx,.{.command_done=.{.key=101,.code=1,.reason=.exited,.output="{\"ok\":false,\"error\":{\"code\":\"SESSION_NOT_FOUND\",\"message\":\"Session not found.\"}}"}});
+    try std.testing.expect(!model.creating and model.showFailure());
 }
 
 test "structured options never set an option twice and a blank task starts without filler text" {

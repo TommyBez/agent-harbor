@@ -17,7 +17,7 @@ harbor create --provider claude --project "$PWD" --title "Review" \
 
 Use either the JSON form or the repeated form. Arguments are supplied at creation, persisted with the conversation and reapplied when it starts or resumes. Harbor does not offer an operation to rewrite an existing session's startup configuration. Native interactive commands such as `/model` remain available in the terminal.
 
-`result SESSION_ID` includes `session.cliArgs` and `session.workingDirectory`. `project` is the original selected project; `workingDirectory` can be a managed worktree. `list --compact` includes `cliArgs` only for sessions that have startup arguments.
+`result SESSION_ID` includes `session.cliArgs` and `session.workingDirectory`. `project` is the original selected project; `workingDirectory` can be a managed worktree. `cli-args SESSION_ID` returns only the session's `provider`, `project` and `cliArgs`, with no responses, so its size stays within the startup-argument limit; the compact list omits arguments.
 
 ## Desktop form
 
@@ -29,7 +29,7 @@ The new-session form offers Model, Effort and Worktree above the additional JSON
 | Effort | `--effort low\|medium\|high\|xhigh\|max` | `-c model_reasoning_effort="minimal\|low\|medium\|high\|xhigh"` |
 | Worktree: New worktree | `--worktree` | `--worktree` |
 
-Harbor does not ask the CLIs for a model catalog; the field suggests the models used before with that provider. If the JSON also sets one of these options, the form asks to keep only one. The app remembers the last provider and, for each provider, the last model, effort and worktree choice in `ui-new-session.json` next to its other local state. **New session like this** in a session's context menu opens the form with that session's provider, original project and startup arguments, split back into these fields where they match.
+Harbor does not ask the CLIs for a model catalog; the field suggests the models used before with that provider. If the JSON also sets one of these options, the form asks to keep only one. The app remembers the last provider and, for each provider, the last model, effort and worktree choice in `ui-new-session.json` next to its other local state. **New session like this** in a session's context menu reads that session's `cli-args` and opens the form with its provider, original project and startup arguments, split back into these fields where they match.
 
 ## Supported options and boundaries
 

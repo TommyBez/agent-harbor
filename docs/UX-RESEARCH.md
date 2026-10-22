@@ -123,7 +123,13 @@ Do not collapse these dimensions into one green dot. “Closed” is not “Fail
 
 ### Create and start
 
-Open New session, select Claude Code or Codex, choose a local project, optionally name the session and supply its first task. The form defaults to the selected session's provider and project, offers up to four recent projects as one-click chips, names the session after the project folder when the name is empty, and starts with Cmd+Enter from the task field. Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval, unless the human pre-authorized its parent folder. Show the CLI's trust question as a Harbor banner the human can answer without taking control.
+Open New session, select Claude Code or Codex, choose a local project, supply the first task and optionally name the session. The form defaults to the selected session's provider and project (or the last provider used when nothing is selected), offers up to four recent projects as one-click chips and focuses the task field. A session without a name is named after the first meaningful line of its task, at most 60 characters, and the name field previews it; without a task it takes the project folder name.
+
+Model, Effort and Worktree sit above the raw CLI arguments. Each starts at "CLI default" and becomes the provider's own startup option only when chosen. Harbor does not query the CLIs for models: the Model field offers the models used before with that provider. The form remembers the last provider and each provider's last model, effort and worktree choice.
+
+Fanning out several tasks follows agent-manager's "one sentence, one agent" pattern in the macOS idiom of a sheet that stays open: Cmd+Return starts the session and shows it; Cmd+Shift+Return (Create and start another) starts it and keeps the form open with the same agent, project, name and options, clearing only the task and keeping focus there. Text typed while the previous session is being created is kept. New session like this, in a session's context menu, opens the form with that session's agent, original project and startup options.
+
+Validate a real directory and an available CLI before claiming success. Create a durable session record, show it in the sidebar, then attach its terminal. Display normal CLI onboarding and permission prompts intact. Never promise that a new, untrusted project starts without human approval, unless the human pre-authorized its parent folder. Show the CLI's trust question as a Harbor banner the human can answer without taking control.
 
 Accept when multiple independent sessions of the same provider can be created and selected, their terminal output remains distinct, and creation failures identify the affected session and a recoverable action.
 
@@ -151,7 +157,7 @@ Search narrows by session title, provider, project and Grok ownership, and tempo
 
 - Provide accessible names for icon controls, labeled text fields and text descriptions of status; never rely on color alone.
 - Support predictable Tab order, visible keyboard focus, Escape to dismiss sheets and focus restoration to the originating control.
-- Keep terminal key handling separate from app shortcuts. Preserve the CLI's interactive keys, paste and interrupt behavior. Do not globally intercept ordinary terminal shortcuts. App shortcuts always carry Command: Cmd+N new session, Cmd+F search, Cmd+I details, Cmd+1–9 open the Nth row on the page, Cmd+Option+Up/Down previous/next session. Selecting a session moves keyboard focus to its terminal.
+- Keep terminal key handling separate from app shortcuts. Preserve the CLI's interactive keys, paste and interrupt behavior. Do not globally intercept ordinary terminal shortcuts. App shortcuts always carry Command: Cmd+N new session, Cmd+F search, Cmd+I details, Cmd+1–9 open the Nth row on the page, Cmd+Option+Up/Down previous/next session, and in the new-session form Cmd+Return create and Cmd+Shift+Return create and start another. Selecting a session moves keyboard focus to its terminal.
 - Do not steal focus when background sessions update. Announce important state changes sparingly rather than reading every output chunk.
 - Keep text scalable and contrast sufficient in both terminal and shell. Loading and error states must be perceivable without animation.
 - Long names and project paths must truncate predictably with full values accessible in details; session identity must remain unambiguous.

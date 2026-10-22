@@ -15,6 +15,22 @@ const TRUST_ERRORS = new Set(['TRUST_REQUIRED', 'HOOK_TRUST_REQUIRED']);
 const PERMISSION_GRACE = 6000;
 const BOOTSTRAP = 'Initialize this interactive session. Reply only READY. Do not use tools or modify files.';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IMAGE_MENTION = /\[Image #\d+\]|@"(?:[^"\\\n]|\\.)*\.(?:png|jpe?g|webp|gif)"|(?<=^|\s)@[^\s"]+\.(?:png|jpe?g|webp|gif)(?=\s|$)/gi;
+/** A session name from its first task: the first meaningful line without image mentions, at most 60 characters cut at a word.
+ * Names only; the delivered prompt and its hash never change. The desktop form previews the same rules (taskTitle in app/src/main.zig). */
+export function taskTitle(text) {
+  if (typeof text !== 'string') return '';
+  const line = text.replace(IMAGE_MENTION, ' ').split(/\r\n|\r|\n/)
+    .map(value => value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/^ *(?:[#>*+-]+ +)+/, '').replace(/ +/g, ' ').replace(/^ | $/g, ''))
+    .find(value => /[A-Za-z0-9]|[^\x00-\x7f]/.test(value));
+  if (!line) return '';
+  const characters = Array.from(line);
+  if (characters.length <= 60) return line;
+  const head = characters.slice(0, 59).join('');
+  // The cut lands on a word boundary: after the last whole word that fits, leaving room for the ellipsis.
+  const space = characters[59] === ' ' ? head.length : head.lastIndexOf(' ');
+  return (space > 0 ? head.slice(0, space) : head).replace(/[ ,;:.-]+$/, '') + '…';
+}
 export class Service {
   constructor(config, store, tmux) { this.config = config; this.store = store; this.tmux = tmux; this.panes = new Map(); this.queues = new Map(); this.keys = new Map(); this.trustSeen = new Map(); this.dialogSince = new Map(); }
   refresh() {
@@ -275,7 +291,7 @@ export class Service {
       createdAt: s.created_at, updatedAt: s.updated_at, archivedAt: s.archived_at, runId: s.run_id, pid: pane?.pid || run?.pid || null };
     result.trustFolder = s.error === 'TRUST_REQUIRED' ? run?.trust_folder || s.working_directory || s.project : s.error === 'HOOK_TRUST_REQUIRED' ? s.working_directory || s.project : null;
     result.trustParent = result.trustFolder ? parentSuggestion(result.trustFolder) : null;
-    if (!compact) Object.assign(result, { cliArgs: JSON.parse(s.cli_args || '[]'), hooksReady: !!run?.hooks_ready, lastResponse: s.last_response, lastResponseAt: s.last_response_at,
+    if (!compact) Object.assign(result, { cliArgs: JSON.parse(s.cli_args || '[]'), titleSource: s.title_source, hooksReady: !!run?.hooks_ready, lastResponse: s.last_response, lastResponseAt: s.last_response_at,
       attachCommand: process.execPath, attachArgs: [CLI, 'attach', id], terminal: run ? { command: this.tmux.binary, args: this.tmux.args(run, s.owner !== 'human' && run.purpose !== 'trust') } : null });
     return result;
   }
@@ -289,7 +305,7 @@ export class Service {
   response(id, requestId, extra = {}) { return { ok: true, session: this.describe(id), ...(requestId ? { request: this.request(id, requestId) } : {}), ...extra }; }
   async execute(action, args = {}) {
     if (args.images !== undefined && !['create','start','resume','send'].includes(action)) fail('INVALID_IMAGES', 'Images are supported by create, start, resume and send only.');
-    if (['watch', 'list', 'result', 'capture', 'doctor', 'attach-info', 'wait', 'events'].includes(action)) return this.read(action, args);
+    if (['watch', 'list', 'result', 'cli-args', 'capture', 'doctor', 'attach-info', 'wait', 'events'].includes(action)) return this.read(action, args);
     if (action === 'control') return this.mutate(action, args);
     if (action === 'trusted-folders') return this.trustedFolders(args);
     const key = args.id || 'create';
@@ -304,7 +320,7 @@ export class Service {
     if (action === 'doctor') {
       const dependencies = {};
       for (const name of ['tmux', 'codex', 'claude']) { try { dependencies[name] = { available: true, path: executable(name, this.config) }; } catch (error) { dependencies[name] = { available: false, error: error.message }; } }
-      return { ok: true, version: VERSION, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 5, capabilities: { requestImages: 1 }, dependencies };
+      return { ok: true, version: VERSION, node: process.version, daemonPid: process.pid, home: this.config.home, database: this.config.database, socket: this.config.socket, schemaVersion: 6, capabilities: { requestImages: 1 }, dependencies };
     }
     const session = this.describe(args.id);
     if (action === 'events') {
@@ -320,6 +336,8 @@ export class Service {
       return { ok: true, events, nextCursor: events.at(-1)?.seq || after };
     }
     if (action === 'result') return { ok: true, session, request: this.request(args.id, args.requestId) };
+    // Only what "New session like this" reuses: bounded by the startup-argument limit, unlike a full result with responses.
+    if (action === 'cli-args') return { ok: true, session: { id: session.id, provider: session.provider, project: session.project, cliArgs: session.cliArgs } };
     if (action === 'capture') { const target = this.terminal(this.store.runRecord(session.runId), { read: true }); return { ok: true, session, screen: target ? this.tmux.capture(target) : '' }; }
     if (action === 'attach-info') { if (!session.alive) fail('SESSION_STOPPED', 'Start the session before attaching.'); return { ok: true, session, command: this.tmux.binary, args: this.tmux.args(this.store.runRecord(session.runId), true) }; }
     if (action === 'wait') {
@@ -356,7 +374,7 @@ export class Service {
     this.refresh();
     if (action === 'create') return this.create(args);
     let s = this.store.session(args.id);
-    if (action === 'rename') { const title = this.title(args.title); this.store.run('UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?', title, now(), s.id); return this.response(s.id); }
+    if (action === 'rename') { const title = this.title(args.title); this.store.run("UPDATE sessions SET title = ?, title_source = 'user', updated_at = ? WHERE id = ?", title, now(), s.id); return this.response(s.id); }
     if (action === 'control') {
       validateActor(args.owner);
       const actor = validateActor(args.actor || 'human');
@@ -421,24 +439,32 @@ export class Service {
     if (!['codex', 'claude'].includes(args.provider)) fail('INVALID_PROVIDER', 'Provider must be codex or claude.');
     const owner = validateActor(args.owner || 'human');
     const inputImages = readImages(args.images);
-    const hasTask = !!args.text || inputImages.length > 0;
+    if (args.start !== undefined && typeof args.start !== 'boolean') fail('INVALID_START', 'start must be true or false.');
+    // start launches the CLI even without a task; it then runs the small initialization turn.
+    const hasTask = !!args.text || inputImages.length > 0 || args.start === true;
     if (!args.project || !path.isAbsolute(args.project)) fail('INVALID_PROJECT', 'Provide an absolute project directory.');
     let project;
     try { project = fs.realpathSync(args.project); if (!fs.statSync(project).isDirectory()) throw new Error('Not a directory'); } catch { fail('INVALID_PROJECT', 'Project directory does not exist.'); }
-    const title = this.title(args.title || path.basename(project));
+    // Without a name, the first task names the session, else the folder. A human rename makes it 'user', which nothing automatic replaces.
+    const derived = args.title ? '' : taskTitle(args.text);
+    const title = this.title(args.title || derived || path.basename(project));
+    const titleSource = args.title ? 'user' : derived ? 'task' : 'folder';
     const cliArgs = validateCliArgs(args.provider, args.cliArgs || []);
     const id = args.id || randomUUID();
     if (!UUID.test(id)) fail('INVALID_SESSION_ID', 'Session ID must be a UUID.');
     const existing = this.store.get('SELECT * FROM sessions WHERE id = ?', id);
     if (existing) {
-      if (existing.provider !== args.provider || existing.project !== project || existing.title !== title || existing.cli_args !== JSON.stringify(cliArgs)) fail('SESSION_ID_CONFLICT', 'Session ID already identifies a different session.');
+      // Without a name the title is automatic, and a retry may cross an upgrade that named it differently
+      // (a version-5 controller used the folder), so any automatic name is the same creation.
+      const sameTitle = existing.title === title || (!args.title && existing.title_source !== 'user');
+      if (existing.provider !== args.provider || existing.project !== project || !sameTitle || existing.cli_args !== JSON.stringify(cliArgs)) fail('SESSION_ID_CONFLICT', 'Session ID already identifies a different session.');
       if (hasTask) return this.start(existing, args, owner, inputImages);
       return this.response(id, undefined, { duplicate: true });
     }
     if (args.text) validateText(args.text);
     this.store.transaction(() => {
-      this.store.run('INSERT INTO sessions(id,title,provider,project,cli_args,owner,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)', id, title, args.provider, project, JSON.stringify(cliArgs), owner, 'stopped', now(), now());
-      this.store.audit('created', id, { provider: args.provider, project, owner });
+      this.store.run('INSERT INTO sessions(id,title,title_source,provider,project,cli_args,owner,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id, title, titleSource, args.provider, project, JSON.stringify(cliArgs), owner, 'stopped', now(), now());
+      this.store.audit('created', id, { provider: args.provider, project, owner, titleSource });
     });
     if (hasTask) return this.start(this.store.session(id), args, owner, inputImages);
     return this.response(id);

@@ -54,7 +54,7 @@ Shell variables may not survive between your tool calls; restate the paths in ev
 ```
 
 - `--provider` is `claude` or `codex`, chosen from the user's request.
-- `--title` is optional (1–160 characters, default: the project folder name). Use a short description of the task; it is what the human sees in the session list.
+- `--title` is optional (1–160 characters). Without it, Harbor names the session from the first line of `--text` (at most 60 characters), or the project folder when there is no task. Use a short description of the task; it is what the human sees in the session list.
 - `--owner grok` keeps the session yours until the human takes it.
 - `--text` is the first task; without `--text` and images the session is recorded but not started (use `start` later).
 - The reply contains `session` and `request`; `request.status` is usually `awaiting_ack` at this point. That is not an answer yet.

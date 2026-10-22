@@ -114,7 +114,7 @@ Desktop app / Grok Bot
         └── ...
 ```
 
-Closing the app detaches its view. An explicit stop requests normal CLI exit and preserves the conversation record. Resume uses that conversation's exact native ID. The desktop list is searchable, paged and grouped by what needs you — attention first, then active, then closed — while only the selected terminal is attached for display. Cmd+N creates a session, Cmd+F searches, Cmd+1–9 and Cmd+Option+Up/Down switch sessions, and Cmd+I opens the details inspector.
+Closing the app detaches its view. An explicit stop requests normal CLI exit and preserves the conversation record. Resume uses that conversation's exact native ID. The desktop list is searchable, paged and grouped by what needs you — attention first, then active, then closed — while only the selected terminal is attached for display. Cmd+N creates a session, Cmd+F searches, Cmd+1–9 and Cmd+Option+Up/Down switch sessions, and Cmd+I opens the details inspector. In the new-session form, Cmd+Return creates and starts the session; Cmd+Shift+Return also starts it but keeps the form open with the same agent, project and options, so several tasks start in a row. A session without a name is named after the first line of its task. **New session like this** in a session's context menu starts from that session's agent, project and options.
 
 Control is explicit: a session belongs to the human or to Grok. Watching a bot's terminal does not take control. Requests have stable IDs so a caller can retrieve a result after a retry. Uncertain delivery after a crash is surfaced rather than blindly replayed.
 

@@ -102,6 +102,7 @@
               </column>
               <context-menu>
                 <menu-item on-press="row_rename:{r.id}">Rename</menu-item>
+                <menu-item on-press="row_like:{r.id}">New session like this</menu-item>
                 <if test="{r.grok}"><menu-item on-press="row_take:{r.id}">Take control</menu-item></if>
                 <else><menu-item on-press="row_release:{r.id}">Hand to Grok</menu-item></else>
                 <if test="{r.alive}"><menu-item on-press="row_terminal:{r.id}">Open in Terminal</menu-item></if>
@@ -195,30 +196,74 @@
               </if>
             </column>
             <column gap="8">
-              <text>Session name · optional</text>
-              <text-field text="{formTitle}" placeholder="{titlePlaceholder}" on-input="title_edit" autofocus="true"/>
-            </column>
-            <column gap="8">
               <text>First task · optional</text>
-              <textarea height="150" text="{formPrompt}" placeholder="What should the agent do?" on-input="prompt_edit" on-submit="create_session"/>
-              <text size="sm" foreground="text_muted">Cmd+Enter starts the session. Without a task, the agent only confirms it is ready.</text>
+              <textarea height="150" text="{formPrompt}" placeholder="What should the agent do?" on-input="prompt_edit" on-submit="create_session" autofocus="{focus_task}"/>
+              <text size="sm" wrap="true" foreground="text_muted">Cmd+Return starts the session. Cmd+Shift+Return starts it and keeps this form open for the next task. Without a task, the agent only confirms it is ready.</text>
             </column>
-            <accordion text="Launch options" selected="{advanced}" on-toggle="toggle_advanced">
+            <row gap="16" cross="start">
+              <column grow="1" gap="8">
+                <text>Session name · optional</text>
+                <text-field text="{formTitle}" placeholder="{titlePlaceholder}" on-input="title_edit"/>
+              </column>
+              <column width="240" gap="8">
+                <text>Model</text>
+                <text-field text="{formModel}" placeholder="CLI default" on-input="model_edit" label="Model"/>
+              </column>
+            </row>
+            <if test="{hasModelHistory}">
+              <row gap="6" cross="center">
+                <text size="sm" foreground="text_muted">Models used before</text>
+                <for each="modelHistory" key="name" as="h">
+                  <button size="sm" variant="outline" selected="{h.chosen}" on-press="pick_model:{h.name}">{h.name}</button>
+                </for>
+              </row>
+            </if>
+            <row gap="24" cross="start">
+              <column gap="8">
+                <text>Effort</text>
+                <toggle-group gap="0" label="Effort">
+                  <for each="effortOptions" key="index" as="e">
+                    <button size="sm" selected="{e.chosen}" on-press="choose_effort:{e.index}">{e.label}</button>
+                  </for>
+                </toggle-group>
+              </column>
+              <column gap="8">
+                <text>Worktree</text>
+                <toggle-group gap="0" label="Worktree">
+                  <button size="sm" selected="{noWorktree}" on-press="worktree_default">CLI default</button>
+                  <button size="sm" selected="{formWorktree}" on-press="worktree_new">New worktree</button>
+                </toggle-group>
+              </column>
+            </row>
+            <text size="sm" wrap="true" foreground="text_muted">{launchPreview}</text>
+            <accordion text="Additional CLI arguments" selected="{advanced}" on-toggle="toggle_advanced">
               <column gap="8">
                 <textarea height="96" text="{formCliArgs}" placeholder="JSON array of arguments" on-input="cli_args_edit"/>
-                <text size="sm" foreground="text_muted" wrap="true">For example ["--model", "model-name"]. Each argument reaches the CLI as literal text and is kept on resume.</text>
+                <text size="sm" foreground="text_muted" wrap="true">For example ["--add-dir", "/path/to/folder"]. Each argument reaches the CLI as literal text after the options above and is kept on resume.</text>
               </column>
             </accordion>
             <if test="{formHasTruncation}"><text foreground="destructive">Text too long. Shorten it before continuing.</text></if>
-            <separator/>
-            <row gap="12" cross="center">
+            <row gap="10" cross="start">
               <icon name="info" foreground="text_muted" width="14" height="14"/>
               <text size="sm" grow="1" wrap="true" foreground="text_muted">Starts under your control. Trust questions appear in Harbor; permission prompts stay in the terminal.</text>
-              <button variant="primary" icon="play" disabled="{cannotCreate}" on-press="create_session">Create and start</button>
             </row>
           </column>
         </column>
       </scroll>
+      <separator/>
+      <row padding="14" main="center" background="surface">
+        <row width="640" gap="12" cross="center">
+          <spacer grow="1"/>
+          <stack>
+            <button variant="outline" disabled="{cannotCreate}" on-press="create_another">Create and start another</button>
+            <tooltip anchor="above">Keeps this form open for the next task · Cmd+Shift+Return</tooltip>
+          </stack>
+          <stack>
+            <button variant="primary" icon="play" disabled="{cannotCreate}" on-press="create_session">Create and start</button>
+            <tooltip anchor="above">Cmd+Return</tooltip>
+          </stack>
+        </row>
+      </row>
     </if>
     <else>
       <if test="{hasSelection}">

@@ -8,6 +8,7 @@ var node_path: []const u8 = "node";
 var cli_path: []const u8 = "bin/harbor.mjs";
 var gui_path: []const u8 = "scripts/gui.mjs";
 var preferences_path: []const u8 = "";
+pub var form_preferences_path: []const u8 = "";
 var request_directory: []const u8 = "ui-requests";
 var home_directory: []const u8 = "";
 var intent_entropy: [32]u8 = @splat(0);
@@ -22,6 +23,7 @@ const shortcuts = [_]sdk.Shortcut{
     .{ .id = "session.new", .key = "n", .modifiers = .{ .primary = true } },
     .{ .id = "session.search", .key = "f", .modifiers = .{ .primary = true } },
     .{ .id = "session.details", .key = "i", .modifiers = .{ .primary = true } },
+    .{ .id = "session.create_another", .key = "enter", .modifiers = .{ .primary = true, .shift = true } },
     .{ .id = "session.next", .key = "arrowdown", .modifiers = .{ .primary = true, .option = true } },
     .{ .id = "session.previous", .key = "arrowup", .modifiers = .{ .primary = true, .option = true } },
     .{ .id = "session.1", .key = "1", .modifiers = .{ .primary = true } },
@@ -60,6 +62,8 @@ pub const Session = struct {
     pid: ?i64 = null,
     createdAt: ?[]const u8 = null,
     updatedAt: ?[]const u8 = null,
+    /// Startup arguments: only `harbor cli-args` sends them, for "New session like this".
+    cliArgs: []const []const u8 = &.{},
     pub fn providerName(s: *const Session) []const u8 { return if (eq(s.provider, "claude")) "Claude Code" else "Codex"; }
     pub fn isArchived(s: *const Session) bool { return eq(s.status, "archived"); }
     pub fn failed(s: *const Session) bool { return eq(s.status, "error"); }
@@ -127,23 +131,163 @@ pub const Row = struct {
     grok: bool = false,
 };
 pub const ProjectChip = struct { path: []const u8, name: []const u8 };
+pub const ModelChip = struct { name: []const u8, chosen: bool };
+pub const EffortChip = struct { index: usize, label: []const u8, chosen: bool };
+/// Effort levels each CLI accepts. The form's index 0 is "CLI default"; index n is level n - 1.
+pub const EffortLevel = struct { value: []const u8, label: []const u8 };
+const claude_efforts = [_]EffortLevel{ .{ .value = "low", .label = "Low" }, .{ .value = "medium", .label = "Medium" }, .{ .value = "high", .label = "High" }, .{ .value = "xhigh", .label = "Extra high" }, .{ .value = "max", .label = "Max" } };
+const codex_efforts = [_]EffortLevel{ .{ .value = "minimal", .label = "Minimal" }, .{ .value = "low", .label = "Low" }, .{ .value = "medium", .label = "Medium" }, .{ .value = "high", .label = "High" }, .{ .value = "xhigh", .label = "Extra high" } };
+pub fn effortLevels(claude: bool) []const EffortLevel { return if (claude) &claude_efforts else &codex_efforts; }
+fn effortIndex(claude: bool, value: []const u8) usize { for (effortLevels(claude), 1..) |level, i| { if (eq(level.value, value)) return i; } return 0; }
+pub const max_model_bytes = 128;
+pub const model_history_len = 5;
+pub const ModelName = struct {
+    bytes: [max_model_bytes]u8 = undefined,
+    len: usize = 0,
+    pub fn text(n: *const ModelName) []const u8 { return n.bytes[0..n.len]; }
+    fn set(n: *ModelName, value: []const u8) void { n.len = @min(value.len, max_model_bytes); @memcpy(n.bytes[0..n.len], value[0..n.len]); }
+};
+/// One provider's last Model, Effort and Worktree picks, and the models used before (most recent first).
+pub const Picks = struct {
+    model: ModelName = .{},
+    effort: usize = 0,
+    worktree: bool = false,
+    history: [model_history_len]ModelName = @splat(.{}),
+    history_len: usize = 0,
+    fn remember(p: *Picks, model: []const u8, effort: usize, worktree: bool) void {
+        p.model.set(model); p.effort = effort; p.worktree = worktree;
+        if (model.len == 0) return;
+        var kept: [model_history_len]ModelName = @splat(.{});
+        kept[0].set(model);
+        var n: usize = 1;
+        for (p.history[0..p.history_len]) |h| { if (n < kept.len and !eq(h.text(), model)) { kept[n] = h; n += 1; } }
+        p.history = kept; p.history_len = n;
+    }
+};
+/// The form's Model, Effort and Worktree for one provider; switching the agent shows the other provider's draft.
+pub const OptionsDraft = struct {
+    model: canvas.TextBuffer(max_model_bytes) = .{},
+    effort: usize = 0,
+    worktree: bool = false,
+};
+/// The structured option a startup argument sets, so a field and the additional JSON never both set it.
+const Option = enum { model, effort, worktree };
+fn optionOf(claude: bool, args: []const []const u8, i: usize) ?Option {
+    const token = args[i];
+    if (!std.mem.startsWith(u8, token, "-")) return null;
+    const split = std.mem.indexOfScalar(u8, token, '=');
+    const flag = if (split) |at| token[0..at] else token;
+    if (eq(flag, "--model") or (!claude and eq(flag, "-m"))) return .model;
+    if (eq(flag, "--worktree") or (claude and eq(flag, "-w"))) return .worktree;
+    if (claude and eq(flag, "--effort")) return .effort;
+    if (!claude and (eq(flag, "-c") or eq(flag, "--config"))) {
+        const value = if (split) |at| token[at + 1 ..] else if (i + 1 < args.len) args[i + 1] else "";
+        if (configEffort(value) != null) return .effort;
+    }
+    return null;
+}
+/// The level of a Codex `model_reasoning_effort=...` override, with or without TOML quotes.
+fn configEffort(value: []const u8) ?[]const u8 {
+    const at = std.mem.indexOfScalar(u8, value, '=') orelse return null;
+    if (!eq(std.mem.trim(u8, value[0..at], " "), "model_reasoning_effort")) return null;
+    return std.mem.trim(u8, std.mem.trim(u8, value[at + 1 ..], " "), "\"'");
+}
+fn validModel(value: []const u8) bool {
+    if (value.len == 0 or value.len > max_model_bytes or value[0] == '-') return false;
+    for (value) |c| { if (c < 0x20 or c == 0x7f) return false; }
+    return true;
+}
+fn isImageName(name: []const u8) bool {
+    for ([_][]const u8{ ".png", ".jpg", ".jpeg", ".webp", ".gif" }) |extension| { if (std.ascii.endsWithIgnoreCase(name, extension)) return true; }
+    return false;
+}
+fn asciiSpace(c: u8) bool { return c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == 0x0b or c == 0x0c; }
+/// The text without Codex `[Image #N]` markers and `@` mentions of image files, each replaced by a space.
+fn withoutImageMentions(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    outer: while (i < text.len) {
+        if (text.len - i > 8 and std.ascii.eqlIgnoreCase(text[i .. i + 8], "[image #")) {
+            var j = i + 8;
+            while (j < text.len and std.ascii.isDigit(text[j])) j += 1;
+            if (j > i + 8 and j < text.len and text[j] == ']') { try out.append(arena, ' '); i = j + 1; continue; }
+        }
+        if (text[i] == '@' and i + 1 < text.len and text[i + 1] == '"') {
+            var j = i + 2;
+            while (j < text.len and text[j] != '"' and text[j] != '\n') j += if (text[j] == '\\' and j + 1 < text.len) 2 else 1;
+            if (j < text.len and text[j] == '"' and isImageName(text[i + 2 .. j])) { try out.append(arena, ' '); i = j + 1; continue; }
+        }
+        if (text[i] == '@' and (i == 0 or asciiSpace(text[i - 1]))) {
+            var j = i + 1;
+            while (j < text.len and !asciiSpace(text[j])) : (j += 1) { if (text[j] == '"') { try out.append(arena, text[i]); i += 1; continue :outer; } }
+            const name = text[i + 1 .. j];
+            // At least one character before the extension's dot, like the broker's pattern.
+            if ((std.mem.lastIndexOfScalar(u8, name, '.') orelse 0) > 0 and isImageName(name)) { try out.append(arena, ' '); i = j; continue; }
+        }
+        try out.append(arena, text[i]);
+        i += 1;
+    }
+    return out.items;
+}
+/// The session name the broker gives a first task (taskTitle in broker/service.mjs): its first meaningful line without
+/// image mentions, spaces collapsed, at most 60 characters cut at a word. The form previews it as the name placeholder.
+pub fn taskTitle(arena: std.mem.Allocator, text: []const u8) []const u8 {
+    const cleaned = withoutImageMentions(arena, text) catch return "";
+    var lines = std.mem.splitAny(u8, cleaned, "\r\n");
+    while (lines.next()) |raw| {
+        const line = arena.dupe(u8, raw) catch return "";
+        for (line) |*c| { if (c.* < 0x20 or c.* == 0x7f) c.* = ' '; }
+        // Leading Markdown markers: headings, quotes and bullets.
+        var start: usize = 0;
+        while (start < line.len and line[start] == ' ') start += 1;
+        while (true) {
+            var j = start;
+            while (j < line.len and std.mem.indexOfScalar(u8, "#>*+-", line[j]) != null) j += 1;
+            if (j == start or j >= line.len or line[j] != ' ') break;
+            while (j < line.len and line[j] == ' ') j += 1;
+            start = j;
+        }
+        var collapsed: std.ArrayList(u8) = .empty;
+        for (line[start..]) |c| { if (c != ' ' or (collapsed.items.len > 0 and collapsed.items[collapsed.items.len - 1] != ' ')) collapsed.append(arena, c) catch return ""; }
+        const value = std.mem.trim(u8, collapsed.items, " ");
+        var meaningful = false;
+        for (value) |c| { if (std.ascii.isAlphanumeric(c) or c >= 0x80) meaningful = true; }
+        if (!meaningful) continue;
+        // Character boundaries (UTF-8 lead bytes): keep 59 characters and the ellipsis when longer than 60.
+        var count: usize = 0;
+        var head_end: usize = value.len;
+        var next_char: ?u8 = null;
+        for (value, 0..) |c, at| {
+            if (c & 0xc0 == 0x80) continue;
+            if (count == 59) { head_end = at; next_char = c; }
+            count += 1;
+        }
+        if (count <= 60) return value;
+        const head = value[0..head_end];
+        const cut = if (next_char == ' ') head else if (std.mem.lastIndexOfScalar(u8, head, ' ')) |space| (if (space > 0) head[0..space] else head) else head;
+        return std.fmt.allocPrint(arena, "{s}…", .{std.mem.trimEnd(u8, cut, " ,;:.-")}) catch "";
+    }
+    return "";
+}
 pub const Msg = union(enum) {
     select: []const u8, select_index: usize, select_next, select_previous,
     filter_all, filter_archived, toggle_group: Group, clear_search, focus_search,
-    search_edit: canvas.TextInputEvent, new_session, new_claude, new_codex, cancel_form, create_session,
+    search_edit: canvas.TextInputEvent, new_session, new_claude, new_codex, new_like, cancel_form, create_session, create_another,
     title_edit: canvas.TextInputEvent, project_edit: canvas.TextInputEvent, prompt_edit: canvas.TextInputEvent,
     toggle_advanced, cli_args_edit: canvas.TextInputEvent, pick_project: []const u8,
+    model_edit: canvas.TextInputEvent, pick_model: []const u8, choose_effort: usize, worktree_default, worktree_new,
     choose_provider: []const u8, choose_folder, folder_done: sdk.EffectExit,
     take_control, release_control, trust_folder, trust_parent, start_session, stop_session, archive_session, restore_session,
     rename_session, rename_edit: canvas.TextInputEvent, save_name, cancel_name,
     reconnect, show_details, open_terminal, copy_id, copy_session_id, previous_page, next_page, dismiss_notice,
     row_rename: []const u8, row_take: []const u8, row_release: []const u8, row_terminal: []const u8, row_copy: []const u8,
-    row_start: []const u8, row_stop: []const u8, row_archive: []const u8, row_restore: []const u8,
+    row_start: []const u8, row_stop: []const u8, row_archive: []const u8, row_restore: []const u8, row_like: []const u8,
     status_line: sdk.EffectLine, watch_done: sdk.EffectExit, command_done: sdk.EffectExit,
     tick: sdk.EffectTimer, notice_expired: sdk.EffectTimer, terminal_event: sdk.EffectPtyEvent, terminal_state: canvas.TerminalState,
     prefs_loaded: sdk.EffectFileResult, prefs_saved: sdk.EffectFileResult, create_file_saved: sdk.EffectFileResult, copied: sdk.EffectClipboardResult,
+    form_prefs_loaded: sdk.EffectFileResult, form_prefs_saved: sdk.EffectFileResult,
     appearance: sdk.platform.Appearance, chrome: sdk.platform.WindowChrome,
-    pub const view_unbound = .{ "select_index", "select_next", "select_previous", "focus_search", "status_line", "watch_done", "command_done", "tick", "notice_expired", "terminal_event", "folder_done", "prefs_loaded", "prefs_saved", "create_file_saved", "copied", "appearance", "chrome", "copy_session_id" };
+    pub const view_unbound = .{ "select_index", "select_next", "select_previous", "focus_search", "status_line", "watch_done", "command_done", "tick", "notice_expired", "terminal_event", "folder_done", "prefs_loaded", "prefs_saved", "create_file_saved", "copied", "appearance", "chrome", "copy_session_id", "new_like", "form_prefs_loaded", "form_prefs_saved" };
 };
 pub const Model = struct {
     snapshot: ?std.json.Parsed(Snapshot) = null,
@@ -168,7 +312,7 @@ pub const Model = struct {
     connected: bool = false,
     notice_buffer: canvas.TextBuffer(1536) = .{},
     notice_kind: NoticeKind = .info,
-    action: enum { other, create, start, control, external, stop, archive, restore, rename, trust } = .other,
+    action: enum { other, create, start, control, external, stop, archive, restore, rename, trust, like } = .other,
     attached_id: canvas.TextBuffer(64) = .{},
     attached_run_id: canvas.TextBuffer(64) = .{},
     attached: bool = false,
@@ -180,6 +324,13 @@ pub const Model = struct {
     create_file_path: canvas.TextBuffer(4096) = .{},
     create_payload_hash: [32]u8 = @splat(0),
     create_intent_valid: bool = false,
+    /// Create and start another: keep the form open after this creation.
+    create_another: bool = false,
+    create_prompt_hash: [32]u8 = @splat(0),
+    /// Form drafts and remembered picks, indexed by provider: 0 Codex, 1 Claude Code.
+    drafts: [2]OptionsDraft = .{ .{}, .{} },
+    picks: [2]Picks = .{ .{}, .{} },
+    last_claude: ?bool = null,
     terminal_key: u64 = 20,
     cols: u16 = 0,
     rows: u16 = 0,
@@ -188,13 +339,14 @@ pub const Model = struct {
     // Edge-triggered focus requests: set by one update, cleared by the next.
     focus_terminal: bool = false,
     search_focus: bool = false,
+    focus_task: bool = false,
     now_s: i64 = 0,
     dark: bool = false,
     high_contrast: bool = false,
     chrome_left: f32 = 0,
     chrome_top: f32 = 0,
     chrome_center: f32 = 0,
-    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "pending", "trustParent", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "chrome_center", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
+    pub const view_unbound = .{ "snapshot", "pending_snapshot", "selection", "search_buffer", "title_buffer", "project_buffer", "prompt_buffer", "cli_args_buffer", "rename_buffer", "collapsed", "page", "watching", "notice_buffer", "notice_kind", "action", "attached_id", "attached_run_id", "attached", "detaching", "attachment_human", "terminal_key", "cols", "rows", "first_output", "attach_wait", "operation_session", "create_id", "create_file_path", "create_payload_hash", "create_intent_valid", "create_another", "create_prompt_hash", "drafts", "picks", "last_claude", "pending", "trustParent", "filteredCount", "sessions", "deinit", "now_s", "dark", "high_contrast", "chrome_left", "chrome_top", "chrome_center", "matches", "orderedIds", "preferred", "effectiveTitle", "inScope", "loading", "filter", "cannotRelease", "canStart", "activeCount", "attentionCount", "matchCount", "pageCount" };
     pub fn deinit(m: *Model) void { discardPending(m); if (m.snapshot) |p| p.deinit(); m.snapshot = null; }
     pub fn sessions(m: *const Model) []const Session { return if (m.snapshot) |p| p.value.sessions else &.{}; }
     pub fn selected(m: *const Model) ?Session { for (m.sessions()) |s| { if (eq(s.id, m.selection.text())) return s; } return null; }
@@ -418,10 +570,40 @@ pub const Model = struct {
         if (title.len > 0) return m.formTitle();
         return std.fs.path.basename(std.mem.trimEnd(u8, m.formProject(), "/"));
     }
+    /// The name the broker will give: from the first task, else the project folder.
     pub fn titlePlaceholder(m: *const Model, arena: std.mem.Allocator) []const u8 {
-        const name = std.fs.path.basename(std.mem.trimEnd(u8, m.formProject(), "/"));
+        const derived = taskTitle(arena, m.formPrompt());
+        const name = if (derived.len > 0) derived else std.fs.path.basename(std.mem.trimEnd(u8, m.formProject(), "/"));
         if (name.len == 0) return "e.g. Checkout review";
         return std.fmt.allocPrint(arena, "Default: {s}", .{name}) catch "e.g. Checkout review";
+    }
+    fn draft(m: *const Model) *const OptionsDraft { return &m.drafts[@intFromBool(m.form_claude)]; }
+    pub fn formModel(m: *const Model) []const u8 { return m.draft().model.text(); }
+    pub fn modelHistory(m: *const Model, arena: std.mem.Allocator) []const ModelChip {
+        const p = &m.picks[@intFromBool(m.form_claude)];
+        const out = arena.alloc(ModelChip, p.history_len) catch return &.{};
+        const current = std.mem.trim(u8, m.formModel(), " ");
+        for (p.history[0..p.history_len], out) |*h, *chip| chip.* = .{ .name = h.text(), .chosen = eq(h.text(), current) };
+        return out;
+    }
+    pub fn hasModelHistory(m: *const Model) bool { return m.picks[@intFromBool(m.form_claude)].history_len > 0; }
+    pub fn effortOptions(m: *const Model, arena: std.mem.Allocator) []const EffortChip {
+        const levels = effortLevels(m.form_claude);
+        const out = arena.alloc(EffortChip, levels.len + 1) catch return &.{};
+        out[0] = .{ .index = 0, .label = "CLI default", .chosen = m.draft().effort == 0 };
+        for (levels, 1..) |level, i| out[i] = .{ .index = i, .label = level.label, .chosen = m.draft().effort == i };
+        return out;
+    }
+    pub fn formWorktree(m: *const Model) bool { return m.draft().worktree; }
+    pub fn noWorktree(m: *const Model) bool { return !m.draft().worktree; }
+    /// What Model, Effort and Worktree add to the CLI's own command line.
+    pub fn launchPreview(m: *const Model, arena: std.mem.Allocator) []const u8 {
+        var args: std.ArrayList([]const u8) = .empty;
+        structuredArgs(m, arena, &args) catch return "";
+        if (args.items.len == 0) return "CLI default: the CLI's own configuration decides model, effort and folder.";
+        const line = std.mem.join(arena, " ", args.items) catch return "";
+        const worktree = if (m.draft().worktree) " The worktree is created on the first launch; resume keeps it." else "";
+        return std.fmt.allocPrint(arena, "Starts the CLI with {s}.{s}", .{ line, worktree }) catch "";
     }
     pub fn recentProjects(m: *const Model, arena: std.mem.Allocator) []const ProjectChip {
         const out = arena.alloc(ProjectChip, 4) catch return &.{};
@@ -436,7 +618,7 @@ pub const Model = struct {
     }
     pub fn hasRecentProjects(m: *const Model) bool { for (m.sessions()) |s| { if (s.project.len > 0) return true; } return false; }
     pub fn cannotCreate(m: *const Model) bool { return m.busy or std.mem.trim(u8, m.formProject(), " \t\r\n").len == 0 or m.effectiveTitle().len == 0 or m.formHasTruncation(); }
-    pub fn formHasTruncation(m: *const Model) bool { return m.project_buffer.truncated or m.title_buffer.truncated or m.prompt_buffer.truncated or m.cli_args_buffer.truncated; }
+    pub fn formHasTruncation(m: *const Model) bool { return m.project_buffer.truncated or m.title_buffer.truncated or m.prompt_buffer.truncated or m.cli_args_buffer.truncated or m.draft().model.truncated; }
     pub fn ptyKey(m: *const Model) u64 { return m.terminal_key; }
     pub fn terminalVisible(m: *const Model) bool { return m.alive() and !m.creating; }
 };
@@ -533,7 +715,7 @@ fn errorCopy(code: []const u8, message: []const u8) []const u8 {
 fn clearCreateIntent(m: *Model) void { m.create_id.clear(); m.create_file_path.clear(); m.create_intent_valid = false; }
 fn createIntent(m: *Model, args_json: []const u8, prompt: []const u8) void {
     var payload = std.crypto.hash.sha2.Sha256.init(.{});
-    for ([_][]const u8{ if (m.form_claude) "claude" else "codex", m.formProject(), m.effectiveTitle(), prompt, args_json }) |part| {
+    for ([_][]const u8{ if (m.form_claude) "claude" else "codex", m.formProject(), m.formTitle(), prompt, args_json }) |part| {
         var len: [8]u8 = undefined; std.mem.writeInt(u64, &len, @intCast(part.len), .little);
         payload.update(&len); payload.update(part);
     }
@@ -566,9 +748,135 @@ fn writeCreateRequest(m: *Model, fx: *Effects, cli_args: []const []const u8, pro
     m.create_file_path.set(path);
     if (m.create_file_path.truncated) { failure(m, fx, "The app's data path is too long."); return; }
     var json: std.Io.Writer.Allocating = .init(alloc); defer json.deinit();
-    std.json.Stringify.value(.{ .id = m.create_id.text(), .requestId = m.create_id.text(), .provider = if (m.form_claude) "claude" else "codex", .project = m.formProject(), .title = m.effectiveTitle(), .owner = "human", .text = prompt, .cliArgs = cli_args }, .{}, &json.writer) catch { failure(m, fx, "Could not prepare the request."); return; };
+    // Without a name the broker names the session from the task, else the folder. Without a task, start runs its initialization turn.
+    const title: ?[]const u8 = if (std.mem.trim(u8, m.formTitle(), " \t\r\n").len > 0) m.formTitle() else null;
+    const text: ?[]const u8 = if (prompt.len > 0) prompt else null;
+    std.json.Stringify.value(.{ .id = m.create_id.text(), .requestId = m.create_id.text(), .provider = if (m.form_claude) "claude" else "codex", .project = m.formProject(), .title = title, .owner = "human", .text = text, .cliArgs = cli_args, .start = true }, .{ .emit_null_optional_fields = false }, &json.writer) catch { failure(m, fx, "Could not prepare the request."); return; };
     m.busy = true;
     fx.writeFile(.{ .key = 108, .path = m.create_file_path.text(), .bytes = json.written(), .on_result = Effects.fileMsg(.create_file_saved) });
+}
+/// Model, Effort and Worktree as the provider's own startup options; they come before the additional JSON arguments.
+fn structuredArgs(m: *const Model, arena: std.mem.Allocator, out: *std.ArrayList([]const u8)) !void {
+    const d = m.draft();
+    const model = std.mem.trim(u8, d.model.text(), " ");
+    if (model.len > 0) try out.appendSlice(arena, &.{ "--model", model });
+    if (d.effort > 0 and d.effort <= effortLevels(m.form_claude).len) {
+        const level = effortLevels(m.form_claude)[d.effort - 1].value;
+        if (m.form_claude) try out.appendSlice(arena, &.{ "--effort", level }) else try out.appendSlice(arena, &.{ "-c", try std.fmt.allocPrint(arena, "model_reasoning_effort=\"{s}\"", .{level}) });
+    }
+    if (d.worktree) try out.append(arena, "--worktree");
+}
+fn optionCopy(option: Option) []const u8 {
+    return switch (option) {
+        .model => "The model is set twice. Clear the Model field or remove it from the additional arguments.",
+        .effort => "The effort is set twice. Choose CLI default for Effort or remove it from the additional arguments.",
+        .worktree => "The worktree is set twice. Choose CLI default for Worktree or remove it from the additional arguments.",
+    };
+}
+fn sha256(text: []const u8) [32]u8 { var out: [32]u8 = undefined; std.crypto.hash.sha2.Sha256.hash(text, &out, .{}); return out; }
+fn submitCreate(m: *Model, fx: *Effects, another: bool) void {
+    if (m.cannotCreate()) return;
+    var arena = std.heap.ArenaAllocator.init(alloc); defer arena.deinit();
+    const a = arena.allocator();
+    const cli_args = std.mem.trim(u8, m.formCliArgs(), " \t\r\n");
+    const extra = std.json.parseFromSliceLeaky([]const []const u8, a, if (cli_args.len == 0) "[]" else cli_args, .{}) catch { failure(m, fx, "Additional arguments must be a JSON array of strings, for example [\"--add-dir\",\"/path\"]."); return; };
+    const d = m.draft();
+    const model = std.mem.trim(u8, d.model.text(), " ");
+    if (model.len > 0 and model[0] == '-') { failure(m, fx, "A model name cannot start with a dash."); return; }
+    for (extra, 0..) |_, i| {
+        const option = optionOf(m.form_claude, extra, i) orelse continue;
+        const set = switch (option) { .model => model.len > 0, .effort => d.effort > 0, .worktree => d.worktree };
+        if (set) { failure(m, fx, optionCopy(option)); return; }
+    }
+    var args: std.ArrayList([]const u8) = .empty;
+    structuredArgs(m, a, &args) catch { failure(m, fx, "Could not prepare the request."); return; };
+    args.appendSlice(a, extra) catch { failure(m, fx, "Could not prepare the request."); return; };
+    const args_json = std.json.Stringify.valueAlloc(a, args.items, .{}) catch { failure(m, fx, "Could not prepare the request."); return; };
+    // A blank task starts the CLI with its initialization turn; the broker never receives filler text as a task.
+    const prompt = if (std.mem.trim(u8, m.formPrompt(), " \t\r\n").len == 0) "" else m.formPrompt();
+    createIntent(m, args_json, prompt);
+    m.create_another = another;
+    m.create_prompt_hash = sha256(m.formPrompt());
+    m.action = .create; notice(m, fx, "Creating session...");
+    writeCreateRequest(m, fx, args.items, prompt);
+}
+/// Splits stored startup arguments back into Model, Effort and Worktree; the rest stays additional JSON.
+fn prefillOptions(m: *Model, claude: bool, args: []const []const u8) void {
+    const d = &m.drafts[@intFromBool(claude)];
+    d.* = .{};
+    var rest: std.ArrayList([]const u8) = .empty; defer rest.deinit(alloc);
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const token = args[i];
+        const split = std.mem.indexOfScalar(u8, token, '=');
+        const inline_value: ?[]const u8 = if (split) |at| token[at + 1 ..] else null;
+        const next: ?[]const u8 = if (inline_value == null and i + 1 < args.len and !std.mem.startsWith(u8, args[i + 1], "-")) args[i + 1] else null;
+        const value = inline_value orelse next;
+        if (optionOf(claude, args, i)) |option| switch (option) {
+            .model => if (value) |v| { if (d.model.isEmpty() and validModel(v)) { d.model.set(v); if (inline_value == null) i += 1; continue; } },
+            .effort => if (value) |v| {
+                const level = effortIndex(claude, if (claude) v else configEffort(v) orelse "");
+                if (d.effort == 0 and level > 0) { d.effort = level; if (inline_value == null) i += 1; continue; }
+            },
+            .worktree => if (value == null and !d.worktree) { d.worktree = true; continue; },
+        };
+        rest.append(alloc, token) catch return;
+    }
+    if (rest.items.len == 0) { m.cli_args_buffer.clear(); return; }
+    const json = std.json.Stringify.valueAlloc(alloc, rest.items, .{}) catch return;
+    defer alloc.free(json);
+    m.cli_args_buffer.set(json);
+    m.advanced = true;
+}
+const FormOpening = union(enum) { blank, claude, codex, like: Session };
+/// Opens the form on the selected session's agent and project with each provider's remembered picks.
+/// "Like this" takes agent, project and startup arguments from that session's `harbor cli-args` reply.
+fn openForm(m: *Model, fx: *Effects, opening: FormOpening) void {
+    if (m.busy) return;
+    m.creating = true; m.renaming = false; m.advanced = false; m.create_another = false; clearCreateIntent(m);
+    m.title_buffer.clear(); m.prompt_buffer.clear(); m.cli_args_buffer.clear();
+    for (&m.drafts, m.picks) |*d, p| { d.* = .{}; d.model.set(p.model.text()); d.effort = p.effort; d.worktree = p.worktree; }
+    if (m.selected()) |s| { m.project_buffer.set(s.project); m.form_claude = eq(s.provider, "claude"); } else if (m.last_claude) |claude| m.form_claude = claude;
+    switch (opening) {
+        .claude => m.form_claude = true,
+        .codex => m.form_claude = false,
+        .like => |s| { m.project_buffer.set(s.project); m.form_claude = eq(s.provider, "claude"); prefillOptions(m, m.form_claude, s.cliArgs); },
+        .blank => {},
+    }
+    m.focus_task = true;
+    syncTerminal(m, fx);
+}
+const SavedPicks = struct { model: []const u8 = "", effort: []const u8 = "", worktree: bool = false, models: []const []const u8 = &.{} };
+const SavedForm = struct { provider: []const u8 = "", codex: SavedPicks = .{}, claude: SavedPicks = .{} };
+/// Records the picks of a successful creation for its provider, then saves them beside the selection preference.
+fn rememberPicks(m: *Model, fx: *Effects) void {
+    const d = m.draft();
+    m.picks[@intFromBool(m.form_claude)].remember(std.mem.trim(u8, d.model.text(), " "), d.effort, d.worktree);
+    m.last_claude = m.form_claude;
+    if (form_preferences_path.len == 0) return;
+    var arena = std.heap.ArenaAllocator.init(alloc); defer arena.deinit();
+    const a = arena.allocator();
+    var saved: [2]SavedPicks = undefined;
+    for (&saved, &m.picks, 0..) |*out, *p, i| {
+        const models = a.alloc([]const u8, p.history_len) catch return;
+        for (p.history[0..p.history_len], models) |*h, *name| name.* = h.text();
+        out.* = .{ .model = p.model.text(), .effort = if (p.effort > 0) effortLevels(i == 1)[p.effort - 1].value else "", .worktree = p.worktree, .models = models };
+    }
+    const json = std.json.Stringify.valueAlloc(a, SavedForm{ .provider = if (m.form_claude) "claude" else "codex", .codex = saved[0], .claude = saved[1] }, .{}) catch return;
+    fx.writeFile(.{ .key = 110, .path = form_preferences_path, .bytes = json, .on_result = Effects.fileMsg(.form_prefs_saved) });
+}
+fn loadFormPrefs(m: *Model, bytes: []const u8) void {
+    if (bytes.len > 16 * 1024) return;
+    const parsed = std.json.parseFromSlice(SavedForm, alloc, bytes, .{ .ignore_unknown_fields = true }) catch return;
+    defer parsed.deinit();
+    for ([_]SavedPicks{ parsed.value.codex, parsed.value.claude }, &m.picks, 0..) |saved, *p, i| {
+        p.* = .{};
+        if (validModel(saved.model)) p.model.set(saved.model);
+        p.effort = effortIndex(i == 1, saved.effort);
+        p.worktree = saved.worktree;
+        for (saved.models) |name| { if (p.history_len < model_history_len and validModel(name)) { p.history[p.history_len].set(name); p.history_len += 1; } }
+    }
+    m.last_claude = if (eq(parsed.value.provider, "claude")) true else if (eq(parsed.value.provider, "codex")) false else null;
 }
 fn watch(m: *Model, fx: *Effects) void {
     if (m.watching) return; m.watching = true;
@@ -640,6 +948,7 @@ fn snapshot(m: *Model, fx: *Effects, bytes: []const u8) void {
 fn boot(m: *Model, fx: *Effects) void {
     m.now_s = @divFloor(fx.wallMs(), 1000);
     if (preferences_path.len > 0) fx.readFile(.{ .key = 103, .path = preferences_path, .on_result = Effects.fileMsg(.prefs_loaded) });
+    if (form_preferences_path.len > 0) fx.readFile(.{ .key = 109, .path = form_preferences_path, .on_result = Effects.fileMsg(.form_prefs_loaded) });
     watch(m, fx);
     fx.startTimer(.{ .key = 1, .interval_ms = 3000, .mode = .repeating, .on_fire = Effects.timerMsg(.tick) });
 }
@@ -681,6 +990,7 @@ pub fn onCommand(name: []const u8) ?Msg {
     if (eq(name, "session.new")) return .new_session;
     if (eq(name, "session.search")) return .focus_search;
     if (eq(name, "session.details")) return .show_details;
+    if (eq(name, "session.create_another")) return .create_another;
     if (eq(name, "session.next")) return .select_next;
     if (eq(name, "session.previous")) return .select_previous;
     if (name.len == 9 and std.mem.startsWith(u8, name, "session.") and name[8] >= '1' and name[8] <= '9') return .{ .select_index = name[8] - '1' };
@@ -691,6 +1001,7 @@ pub fn onChrome(chrome: sdk.platform.WindowChrome) ?Msg { return .{ .chrome = ch
 pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
     m.focus_terminal = false;
     m.search_focus = false;
+    m.focus_task = false;
     switch (msg) {
         .select => |id| select(m, fx, id),
         .select_index => |n| selectOnPage(m, fx, n),
@@ -703,15 +1014,11 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .focus_search => m.search_focus = true,
         .previous_page => { if (m.page > 0) m.page -= 1; },
         .next_page => { if (!m.lastPage()) m.page += 1; },
-        .new_session, .new_claude, .new_codex => {
-            if (m.busy) return;
-            m.creating = true; m.renaming = false; m.advanced = false; clearCreateIntent(m);
-            m.title_buffer.clear(); m.prompt_buffer.clear(); m.cli_args_buffer.clear();
-            if (m.selected()) |s| { m.project_buffer.set(s.project); m.form_claude = eq(s.provider, "claude"); }
-            if (std.meta.activeTag(msg) == .new_claude) m.form_claude = true;
-            if (std.meta.activeTag(msg) == .new_codex) m.form_claude = false;
-            syncTerminal(m, fx);
-        },
+        .new_session => openForm(m, fx, .blank),
+        .new_claude => openForm(m, fx, .claude),
+        .new_codex => openForm(m, fx, .codex),
+        // The list omits startup arguments to stay within its snapshot budget; read this session's on demand.
+        .new_like => { if (!m.hasSelection() or m.busy) return; m.action = .like; run(m, fx, &.{ "cli-args", m.selectedId() }); },
         .cancel_form => { if (m.busy) return; m.creating = false; clearCreateIntent(m); m.focus_terminal = true; syncTerminal(m, fx); },
         .title_edit => |e| m.title_buffer.apply(e), .project_edit => |e| m.project_buffer.apply(e), .prompt_edit => |e| m.prompt_buffer.apply(e),
         .cli_args_edit => |e| m.cli_args_buffer.apply(e), .toggle_advanced => m.advanced = !m.advanced,
@@ -719,17 +1026,13 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .choose_provider => |p| m.form_claude = eq(p, "claude"),
         .choose_folder => { fx.spawn(.{ .key = 105, .argv = &.{ node_path, gui_path, "folder" }, .output = .collect, .on_exit = Effects.exitMsg(.folder_done) }); },
         .folder_done => |r| { if (r.code == 0 and r.reason == .exited) { const p = std.mem.trim(u8, r.output, "\r\n"); if (p.len > 0) m.project_buffer.set(p); } else notice(m, fx, "Folder selection cancelled or unavailable."); },
-        .create_session => {
-            if (m.cannotCreate()) return;
-            const cli_args = std.mem.trim(u8, m.formCliArgs(), " \t\r\n");
-            const args_json = if (cli_args.len == 0) "[]" else cli_args;
-            const checked = std.json.parseFromSlice([]const []const u8, alloc, args_json, .{}) catch { failure(m, fx, "Options must be a JSON array of strings, for example [\"--model\",\"model-name\"]."); return; };
-            defer checked.deinit();
-            const prompt = if (m.prompt_buffer.isEmpty()) "Reply only READY. Do not use tools and do not modify files." else m.formPrompt();
-            createIntent(m, args_json, prompt);
-            m.action = .create; notice(m, fx, "Creating session...");
-            writeCreateRequest(m, fx, checked.value, prompt);
-        },
+        .create_session => submitCreate(m, fx, false),
+        // Cmd+Shift+Return reaches the app from anywhere; it only acts while the form is open.
+        .create_another => { if (m.creating) submitCreate(m, fx, true); },
+        .model_edit => |e| m.drafts[@intFromBool(m.form_claude)].model.apply(e),
+        .pick_model => |name| m.drafts[@intFromBool(m.form_claude)].model.set(name),
+        .choose_effort => |n| { if (n <= effortLevels(m.form_claude).len) m.drafts[@intFromBool(m.form_claude)].effort = n; },
+        .worktree_default, .worktree_new => m.drafts[@intFromBool(m.form_claude)].worktree = msg == .worktree_new,
         .create_file_saved => |r| { m.busy = false; if (r.outcome == .ok) { run(m, fx, &.{ "create", "--request-file", m.create_file_path.text() }); } else failure(m, fx, "The request was not saved. Retry to continue the same creation."); },
         .take_control => { if (!m.hasSelection() or m.busy or m.human()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "human" }); },
         .release_control => { if (!m.hasSelection() or m.cannotRelease()) return; m.action = .control; run(m, fx, &.{ "control", m.selectedId(), "grok" }); },
@@ -760,6 +1063,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
         .row_stop => |id| rowAction(m, fx, id, .stop_session),
         .row_archive => |id| rowAction(m, fx, id, .archive_session),
         .row_restore => |id| rowAction(m, fx, id, .restore_session),
+        .row_like => |id| rowAction(m, fx, id, .new_like),
         .status_line => |line| { if (line.truncated or line.dropped_before > 0) { rejectSnapshot(m, fx); } else snapshot(m, fx, line.line); },
         .watch_done => { discardPending(m); m.watching = false; m.connected = false; },
         .tick => |t| { if (t.outcome == .fired) { m.now_s = @divFloor(fx.wallMs(), 1000); m.attach_wait = false; watch(m, fx); syncTerminal(m, fx); } },
@@ -771,20 +1075,39 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
                 return;
             }
             const parsed = std.json.parseFromSlice(struct { session: ?Session = null }, alloc, r.output, .{ .ignore_unknown_fields = true }) catch null;
+            var started_buffer: [768]u8 = undefined;
+            var started: []const u8 = "Session started.";
             if (parsed) |p| {
                 defer p.deinit();
+                if (m.action == .like) {
+                    const source = p.value.session orelse { failure(m, fx, "Could not read that session's options. Try again."); return; };
+                    // Selecting another session meanwhile drops the reply.
+                    if (eq(source.id, m.operation_session.text()) and eq(source.id, m.selectedId())) openForm(m, fx, .{ .like = source });
+                    return;
+                }
                 if (m.action == .create) {
                     const created = p.value.session orelse { failure(m, fx, "Incomplete response. Retry to check the same creation."); return; };
-                    m.creating = false; clearCreateIntent(m); m.title_buffer.clear(); m.prompt_buffer.clear(); m.cli_args_buffer.clear();
+                    rememberPicks(m, fx);
+                    clearCreateIntent(m);
                     m.filter = .all; m.search_buffer.clear();
-                    select(m, fx, created.id);
-                    revealSelection(m);
+                    if (m.create_another) {
+                        // Same agent, project, name and options for the next task. Only the submitted task clears:
+                        // text typed while the session was being created stays.
+                        if (std.mem.eql(u8, &sha256(m.formPrompt()), &m.create_prompt_hash)) m.prompt_buffer.clear();
+                        m.selection.set(created.id); saveSelection(m, fx); revealSelection(m);
+                        m.focus_task = true;
+                        started = std.fmt.bufPrint(&started_buffer, "Started “{s}”. Add the next task.", .{created.title}) catch "Session started. Add the next task.";
+                    } else {
+                        m.creating = false; m.title_buffer.clear(); m.prompt_buffer.clear(); m.cli_args_buffer.clear();
+                        select(m, fx, created.id);
+                        revealSelection(m);
+                    }
                 }
             } else if (m.action == .create) { failure(m, fx, "Incomplete response. Retry to check the same creation."); return; }
             m.renaming = false;
             if (m.action == .external) { fx.spawn(.{ .key = 107, .argv = &.{ node_path, gui_path, "terminal", m.operation_session.text() }, .output = .collect, .on_exit = Effects.exitMsg(.folder_done) }); }
             success(m, fx, switch (m.action) {
-                .create => "Session started.",
+                .create => started,
                 .start => "Session resumed. The terminal is reconnecting.",
                 .control => if (m.human()) "You have control. The terminal accepts keyboard input." else "Control handed to Grok. The terminal is read-only.",
                 .external => "Session opened in Terminal.",
@@ -793,7 +1116,7 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
                 .restore => "Session restored.",
                 .rename => "Name updated.",
                 .trust => "Trusted. The session continues on its own.",
-                .other => "Operation completed.",
+                .other, .like => "Operation completed.",
             });
             if (m.action == .control) m.focus_terminal = true;
         },
@@ -812,6 +1135,8 @@ pub fn update(m: *Model, msg: Msg, fx: *Effects) void {
             revealSelection(m); syncTerminal(m, fx);
         },
         .prefs_saved => |r| { if (r.outcome != .ok) failure(m, fx, "The selection was not saved. Sessions remain in the controller."); },
+        .form_prefs_loaded => |r| { if (r.outcome == .ok) loadFormPrefs(m, r.bytes); },
+        .form_prefs_saved => |r| { if (r.outcome != .ok) failure(m, fx, "The session started, but its model, effort and worktree were not remembered."); },
         .appearance => |a| { m.dark = a.color_scheme == .dark; m.high_contrast = a.high_contrast; },
         .chrome => |c| { m.chrome_left = c.insets.left; m.chrome_top = c.insets.top; m.chrome_center = if (c.buttons.height > 0) c.buttons.y + c.buttons.height / 2 else 0; },
     }
@@ -849,6 +1174,7 @@ pub fn main(init: std.process.Init) !void {
     home_directory = init.environ_map.get("HOME") orelse "";
     const state_home = init.environ_map.get("HARBOR_HOME") orelse try std.fs.path.join(alloc, &.{ init.environ_map.get("HOME") orelse ".", "Library/Application Support/Agent Harbor" });
     preferences_path = try std.fs.path.join(alloc, &.{ state_home, "ui-selection" });
+    form_preferences_path = try std.fs.path.join(alloc, &.{ state_home, "ui-new-session.json" });
     request_directory = try std.fs.path.join(alloc, &.{ state_home, "ui-requests" });
     _ = try std.Io.Dir.cwd().createDirPathStatus(init.io, request_directory, .fromMode(0o700));
     try std.Io.Dir.cwd().setFilePermissions(init.io, state_home, .fromMode(0o700), .{});

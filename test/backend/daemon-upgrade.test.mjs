@@ -38,7 +38,7 @@ test('a client replaces a controller from an older release and keeps working', {
     assert.equal(processAlive(legacy.pid), false, 'The old controller received its normal shutdown.');
     const doctor = await rpc('doctor', {}, { config });
     assert.equal(doctor.version, VERSION);
-    assert.equal(doctor.schemaVersion, 5);
+    assert.equal(doctor.schemaVersion, 6);
     await assert.rejects(rpc('shutdown', { version: VERSION }, { config, autoStart: false }), { code: 'DAEMON_NOT_OLDER' });
     await assert.rejects(rpc('shutdown', { version: '0.0.1' }, { config, autoStart: false }), { code: 'DAEMON_NOT_OLDER' });
     assert.equal((await rpc('shutdown', { version: '999.0.0' }, { config, autoStart: false })).version, VERSION);

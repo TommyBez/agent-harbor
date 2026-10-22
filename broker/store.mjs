@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { now, fail } from './common.mjs';
 
@@ -10,10 +11,10 @@ export class Store {
       const check = this.db.prepare('PRAGMA quick_check').get().quick_check;
       if (check !== 'ok') fail('DATABASE_CORRUPT', check);
       const version = this.db.prepare('PRAGMA user_version').get().user_version;
-      if (version > 5) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
+      if (version > 6) fail('SCHEMA_TOO_NEW', 'The database was created by a newer version of Agent Harbor.');
       if (version === 0) this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE sessions (
-          id TEXT PRIMARY KEY, title TEXT NOT NULL, provider TEXT NOT NULL CHECK(provider IN ('codex','claude')),
+          id TEXT PRIMARY KEY, title TEXT NOT NULL, title_source TEXT NOT NULL DEFAULT 'user' CHECK(title_source IN ('folder','task','user')), provider TEXT NOT NULL CHECK(provider IN ('codex','claude')),
           project TEXT NOT NULL, working_directory TEXT, cli_args TEXT NOT NULL DEFAULT '[]', owner TEXT NOT NULL CHECK(owner IN ('human','grok')), status TEXT NOT NULL,
           native_id TEXT, run_id TEXT, pending INTEGER NOT NULL DEFAULT 0, active_turn TEXT, control_epoch INTEGER NOT NULL DEFAULT 0,
           last_response TEXT, last_response_at TEXT, error TEXT, closing INTEGER NOT NULL DEFAULT 0,
@@ -37,7 +38,7 @@ export class Store {
           UNIQUE(run_id, source_offset));
         CREATE INDEX events_run ON events(run_id, seq);
         CREATE TABLE audit (seq INTEGER PRIMARY KEY, time TEXT NOT NULL, action TEXT NOT NULL, session_id TEXT, details TEXT NOT NULL);
-        PRAGMA user_version=5; COMMIT;`);
+        PRAGMA user_version=6; COMMIT;`);
       if (version === 1) this.transaction(() => {
         const columns = table => new Set(this.all('PRAGMA table_info(' + table + ')').map(column => column.name));
         if (!columns('runs').has('pane_id')) this.db.exec('ALTER TABLE runs ADD COLUMN pane_id TEXT');
@@ -64,6 +65,15 @@ export class Store {
         this.db.exec('ALTER TABLE runs ADD COLUMN trust TEXT');
         this.db.exec('ALTER TABLE runs ADD COLUMN trust_folder TEXT');
         this.db.exec('PRAGMA user_version=5');
+      });
+      // title_source records who named a session: its folder, its first task, or a person. Older titles that are
+      // exactly the folder name count as the folder default; any other title may be a person's choice, so it stays 'user'.
+      if (version >= 1 && version <= 5) this.transaction(() => {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'user' CHECK(title_source IN ('folder','task','user'))");
+        if (this.all('PRAGMA table_info(sessions)').some(column => column.name === 'project')) {
+          for (const s of this.all('SELECT id, title, project FROM sessions')) if (s.title && s.title === path.basename(s.project || '')) this.run("UPDATE sessions SET title_source = 'folder' WHERE id = ?", s.id);
+        }
+        this.db.exec('PRAGMA user_version=6');
       });
       fs.chmodSync(filename, 0o600);
     } catch (error) { this.db?.close(); if (error.code?.startsWith('SQLITE') || !error.code) fail('DATABASE_UNAVAILABLE', `State database could not be opened; it was not reset: ${error.message}`); throw error; }

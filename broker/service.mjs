@@ -11,6 +11,8 @@ import { readImages, stageImages, imagePrompt, imagePayloadHash } from './images
 
 const FINISHED = new Set(['completed', 'failed', 'interrupted']);
 const TRUST_ERRORS = new Set(['TRUST_REQUIRED', 'HOOK_TRUST_REQUIRED']);
+// A Codex PermissionRequest may be answered by its reviewer or another hook; ask the human only if nothing follows.
+const PERMISSION_GRACE = 6000;
 const BOOTSTRAP = 'Initialize this interactive session. Reply only READY. Do not use tools or modify files.';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export class Service {
@@ -36,8 +38,14 @@ export class Service {
         } else if (!run.hooks_ready && since(run.started_at) > this.config.startupTimeout) {
           this.store.run("UPDATE sessions SET status = 'attention', error = 'HOOKS_NOT_READY' WHERE id = ?", session.id);
         } else {
-          const delivery = this.store.get("SELECT created_at FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at DESC LIMIT 1", run.id);
-          if (delivery && since(delivery.created_at) > this.config.startupTimeout && current.status !== 'attention') this.store.run("UPDATE sessions SET status = 'attention', error = 'PROMPT_NOT_ACKNOWLEDGED' WHERE id = ?", session.id);
+          const delivery = this.store.get("SELECT status, created_at, delivered_at FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at DESC LIMIT 1", run.id);
+          // Age counts from this run's delivery: a request moved to a relaunch keeps its original created_at.
+          const sent = delivery && new Date(Math.max(Date.parse(delivery.delivered_at || delivery.created_at), Date.parse(run.started_at))).toISOString();
+          if (delivery && since(sent) > this.config.startupTimeout && current.status !== 'attention') this.store.run("UPDATE sessions SET status = 'attention', error = ? WHERE id = ?", delivery.status === 'uncertain' ? 'DELIVERY_UNCERTAIN' : 'PROMPT_NOT_ACKNOWLEDGED', session.id);
+          if (session.provider === 'codex' && current.pending && current.status !== 'attention') {
+            const last = this.store.get('SELECT event_name, time FROM events WHERE run_id = ? ORDER BY seq DESC LIMIT 1', run.id);
+            if (last?.event_name === 'PermissionRequest' && Date.now() - Date.parse(last.time) > PERMISSION_GRACE) this.store.run("UPDATE sessions SET status = 'attention', error = 'PERMISSION_REQUIRED' WHERE id = ?", session.id);
+          }
         }
 
       } else if (!run.ended_at) {
@@ -55,6 +63,48 @@ export class Service {
     }
     // The trust helper holds no conversation; its terminal stays writable for the human.
     this.tmux.syncOwnership(this.store.all('SELECT id,owner,run_id FROM sessions WHERE run_id IS NOT NULL AND archived_at IS NULL').map(s => { const run = this.store.runRecord(s.run_id); return { ...s, owner: run.purpose === 'trust' ? 'human' : s.owner, tmuxName: run.tmux_name }; }));
+  }
+  // Releases up to 0.1.3 raised a sticky HOOK_PROJECT_MISMATCH whenever Claude's shell left the project root, dropped every
+  // event from that folder, and a dropped Stop or prompt could then cascade into HOOK_TURN_ID_MISMATCH. Under the current
+  // rules a Claude cwd incident only precedes the run's first accepted event, so one that follows an accepted event is
+  // legacy. Recovery clears it so the CLI's next events count again. It never replays or guesses: a live run is 'ready'
+  // only when its last accepted event is a plain Stop with nothing dropped after it; otherwise it asks the human to check
+  // (TURN_STATE_UNKNOWN) until the CLI's next event sets the real state. Once per run.
+  recoverCwdIncidents() {
+    for (const run of this.store.all("SELECT r.* FROM runs r JOIN sessions s ON s.id = r.session_id WHERE r.attention IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH') AND s.provider = 'claude'")) {
+      const audits = this.store.all("SELECT seq, action, details FROM audit WHERE session_id = ? AND action IN ('HOOK_PROJECT_MISMATCH','HOOK_TURN_ID_MISMATCH','cwd_incident_cleared') ORDER BY seq", run.session_id)
+        .map(row => { try { return { ...JSON.parse(row.details), seq: row.seq, action: row.action }; } catch { return null; } }).filter(audit => audit?.runId === run.id);
+      if (audits.some(audit => audit.action === 'cwd_incident_cleared')) continue;
+      const cwd = audits.find(audit => audit.action === 'HOOK_PROJECT_MISMATCH' && Number.isInteger(audit.offset));
+      if (!cwd || !this.store.get('SELECT 1 FROM events WHERE run_id = ? AND source_offset < ? LIMIT 1', run.id, cwd.offset)) continue;
+      if (run.attention === 'HOOK_TURN_ID_MISMATCH' && !audits.some(audit => audit.action === 'HOOK_TURN_ID_MISMATCH' && audit.seq > cwd.seq)) continue;
+      const idle = !run.ended_at && this.legacyIdle(run);
+      this.store.transaction(() => {
+        this.store.run('UPDATE runs SET attention = NULL WHERE id = ?', run.id);
+        if (run.ended_at) this.store.run('UPDATE sessions SET error = NULL WHERE run_id = ? AND error = ?', run.id, run.attention);
+        else if (idle) this.store.run("UPDATE sessions SET status = 'ready', error = NULL WHERE run_id = ?", run.id);
+        else {
+          // Forget the turn the legacy rule may have lost track of: the CLI's next event sets it. An open request keeps
+          // running (its own Stop can still arrive) but is marked so it is never reported as a human interruption.
+          this.store.run("UPDATE sessions SET status = 'attention', error = 'TURN_STATE_UNKNOWN', active_turn = NULL WHERE run_id = ?", run.id);
+          this.store.run("UPDATE requests SET error = 'RESULT_NOT_OBSERVED' WHERE run_id = ? AND status = 'running'", run.id);
+        }
+        this.store.audit('cwd_incident_cleared', run.session_id, { runId: run.id, state: run.ended_at ? 'ended' : idle ? 'ready' : 'unknown' });
+      });
+    }
+  }
+  // The run's last accepted event, ignoring informational notifications, is a Stop without background work, no turn is open,
+  // and the journal holds nothing after the last accepted line (a later line would have been dropped by the legacy rule).
+  legacyIdle(run) {
+    const session = this.store.get('SELECT pending FROM sessions WHERE run_id = ?', run.id);
+    const last = this.store.get('SELECT source_offset FROM events WHERE run_id = ? ORDER BY source_offset DESC LIMIT 1', run.id);
+    const relevant = this.store.get("SELECT event_name, payload FROM events WHERE run_id = ? AND NOT (event_name = 'Notification' AND COALESCE(json_extract(payload, '$.notification_type'), '') NOT IN ('permission_prompt','elicitation_dialog','elicitation_url_dialog')) ORDER BY source_offset DESC LIMIT 1", run.id);
+    if (!session || session.pending || !last || relevant?.event_name !== 'Stop' || (JSON.parse(relevant.payload).background_tasks || []).length) return false;
+    try {
+      const journal = fs.readFileSync(path.join(this.config.home, 'runs', run.id, 'events.jsonl'));
+      const end = journal.indexOf(10, last.source_offset);
+      return end >= 0 && journal.subarray(end + 1).toString('utf8').trim() === '';
+    } catch { return false; }
   }
   // Startup dialogs shown before Harbor's observation begins. Returns true while the trust dialog is open.
   answerStartup(session, run) {

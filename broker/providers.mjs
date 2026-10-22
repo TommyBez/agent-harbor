@@ -21,7 +21,8 @@ export function launchCommand(session, config, prompt, images = []) {
 }
 function claudeHooks(config, hook) {
   const filename = path.join(config.home, 'claude-hooks.json');
-  fs.writeFileSync(filename, JSON.stringify({ hooks: Object.fromEntries([...OBSERVED_EVENTS, 'StopFailure', 'Notification'].map(event => [event, hook])) }), { mode: 0o600 });
+  // Claude-only events: failed tools and auto-mode denials also show the turn moving on after a permission request.
+  fs.writeFileSync(filename, JSON.stringify({ hooks: Object.fromEntries([...OBSERVED_EVENTS, 'StopFailure', 'Notification', 'PostToolUseFailure', 'PermissionDenied'].map(event => [event, hook])) }), { mode: 0o600 });
   return filename;
 }
 /** Plain interactive Claude with no conversation, so it can show its own workspace-trust dialog. */

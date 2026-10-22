@@ -76,3 +76,12 @@ export function sameRepository(project, directory) {
   };
   try { return common(project) === common(directory); } catch { return false; }
 }
+/** A different checkout of the project's repository: its root, or the project's position inside it (Codex keeps that). */
+export function worktreeOf(project, directory) {
+  const top = cwd => fs.realpathSync(execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore','pipe','ignore'] }).trim());
+  try {
+    const root = top(directory), base = top(project);
+    const inside = path.relative(root, fs.realpathSync(directory));
+    return root !== base && (inside === '' || inside === path.relative(base, fs.realpathSync(project))) && sameRepository(project, directory);
+  } catch { return false; }
+}

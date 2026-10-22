@@ -100,7 +100,7 @@ test('four independent interactive CLI sessions: exact resume, ownership, idempo
   } finally { await env.cleanup(); }
 });
 
-test('attention differs from completion; continued Stop updates response; takeover fences a pending send', { skip: !supported, timeout: 20000 }, async () => {
+test('attention differs from completion; continued Stop updates response; takeover fences a pending send', { skip: !supported, timeout: 30000 }, async () => {
   const env = await environment(); const { call, project } = env;
   try {
     const id = (await call('create', { provider: 'claude', project, title: 'Boundaries', owner: 'grok', text: 'READY', requestId: 'initial' })).session.id;
@@ -117,7 +117,8 @@ test('attention differs from completion; continued Stop updates response; takeov
     assert.equal(interrupted.session.owner, 'human');
     await assert.rejects(call('control', { id, owner: 'grok', actor: 'human' }), { code: 'TURN_PENDING' });
     const blockedId = (await call('create', { provider: 'codex', project, title: 'Permission', owner: 'grok', text: 'BLOCK', requestId: 'blocked' })).session.id;
-    const attention = await call('wait', { id: blockedId, requestId: 'blocked', timeout: 5000 });
+    // Codex may answer a PermissionRequest through its reviewer; Harbor asks the human once the CLI stays silent.
+    const attention = await call('wait', { id: blockedId, requestId: 'blocked', timeout: 12000 });
     assert.equal(attention.outcome, 'attention');
     assert.equal(attention.session.error, 'PERMISSION_REQUIRED');
     assert.notEqual(attention.request.status, 'completed');

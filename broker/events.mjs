@@ -1,10 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { usesWorktree, sameRepository } from './arguments.mjs';
+import { usesWorktree, worktreeOf } from './arguments.mjs';
 import { hashPrompt, now } from './common.mjs';
 import { withoutCodexImagePrefix } from './images.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'interrupted']);
+// StopFailure types after which the CLI is idle at its prompt and nobody has to act: the request records the failure.
+// Not rate_limit (Claude may open its usage-limit menu or auto-continue) nor invalid_request (a full context needs /compact).
+const TRANSIENT_FAILURES = new Set(['overloaded', 'server_error', 'max_output_tokens']);
+const real = directory => { try { return fs.realpathSync(directory); } catch { return path.resolve(directory); } };
 export function importEvents(store, config, run) {
   if (['HOOK_JOURNAL_TRUNCATED', 'HOOK_JOURNAL_CORRUPT', 'HOOK_EVENT_TOO_LARGE'].includes(run.attention)) return;
   const filename = path.join(config.home, 'runs', run.id, 'events.jsonl');
@@ -30,6 +34,25 @@ export function importEvents(store, config, run) {
     store.run('UPDATE runs SET offset = ? WHERE id = ?', offset, run.id);
   });
 }
+// Claude runs one turn at a time. When a new turn shows up while an older request still runs and its turn never stopped
+// (an Esc interrupt fires no hook, or a legacy rule dropped its Stop), that request is over: superseded by the human, or
+// marked RESULT_NOT_OBSERVED by recovery. A Stop recorded with background work is a real end of turn and is left alone.
+function closeOrphans(store, run, session, turnId, time) {
+  if (session.provider !== 'claude') return;
+  store.run("UPDATE requests SET status = 'interrupted', error = CASE WHEN error = 'RESULT_NOT_OBSERVED' THEN error ELSE 'TURN_SUPERSEDED' END, completed_at = ? WHERE run_id = ? AND status = 'running' AND native_turn_id IS NOT NULL AND native_turn_id != ? AND native_turn_id NOT IN (SELECT turn_id FROM events WHERE run_id = ? AND turn_id IS NOT NULL AND event_name IN ('Stop','StopFailure'))", time, run.id, turnId, run.id);
+}
+// A legacy recovery left this run's turn unknown (active_turn NULL) and the CLI has not named it yet. The marker is the
+// recovery's own audit row, which no display state can overwrite.
+function unknownTurn(store, run, session) {
+  return session.provider === 'claude' && !session.active_turn && !!store.get("SELECT 1 FROM audit WHERE session_id = ? AND action = 'cwd_incident_cleared' AND json_extract(details, '$.runId') = ? AND json_extract(details, '$.state') = 'unknown' LIMIT 1", session.id, run.id);
+}
+// The CLI's first event that carries a prompt ID after such a recovery names the running turn.
+function adoptUnknownTurn(store, run, session, turnId, time) {
+  if (!turnId || !unknownTurn(store, run, session)) return;
+  closeOrphans(store, run, session, turnId, time);
+  store.run('UPDATE sessions SET active_turn = ? WHERE id = ?', turnId, session.id);
+  session.active_turn = turnId;
+}
 export function incident(store, run, code, details = {}) {
   if (store.runRecord(run.id)?.attention === code) return;
   store.run('UPDATE runs SET attention = ? WHERE id = ?', code, run.id);
@@ -44,11 +67,14 @@ export function acceptEvent(store, run, entry, offset) {
   if (typeof e.session_id !== 'string' || !e.session_id) { incident(store, run, 'HOOK_SESSION_MISSING', { offset }); return; }
   if (session.native_id && session.native_id !== e.session_id) { incident(store, run, 'HOOK_NATIVE_ID_MISMATCH', { offset }); return; }
   if (!session.native_id && !['SessionStart', 'UserPromptSubmit'].includes(e.hook_event_name)) return;
-  if (e.cwd && path.resolve(e.cwd) !== (session.working_directory || session.project)) {
-    if (!session.working_directory && usesWorktree(session) && ['SessionStart','UserPromptSubmit'].includes(e.hook_event_name) && sameRepository(session.project, e.cwd)) {
-      store.run('UPDATE sessions SET working_directory = ? WHERE id = ?', fs.realpathSync(e.cwd), session.id);
-      session.working_directory = fs.realpathSync(e.cwd);
-    } else { incident(store, run, 'HOOK_PROJECT_MISMATCH', { offset }); return; }
+  // cwd is the CLI's current directory. Codex keeps it fixed for a session, but Claude's follows the Bash tool's cd,
+  // --add-dir folders and worktrees, so for Claude only the run's first accepted event must start where Harbor launched it.
+  // Identity rests on the launch environment and the native session ID either way.
+  if (e.cwd && real(e.cwd) !== real(session.working_directory || session.project)) {
+    if (!session.working_directory && usesWorktree(session) && ['SessionStart','UserPromptSubmit'].includes(e.hook_event_name) && worktreeOf(session.project, e.cwd)) {
+      store.run('UPDATE sessions SET working_directory = ? WHERE id = ?', real(e.cwd), session.id);
+      session.working_directory = real(e.cwd);
+    } else if (session.provider === 'codex' || !store.runRecord(run.id).hooks_ready) { incident(store, run, 'HOOK_PROJECT_MISMATCH', { offset }); return; }
   }
   const time = typeof entry.time === 'string' ? entry.time : now();
   const turnId = e[session.provider === 'codex' ? 'turn_id' : 'prompt_id'] || null;
@@ -60,6 +86,7 @@ export function acceptEvent(store, run, entry, offset) {
   const event = e.hook_event_name;
   if (event === 'UserPromptSubmit') {
     if (!turnId) { incident(store, run, 'HOOK_TURN_ID_MISSING'); return; }
+    closeOrphans(store, run, session, turnId, time);
     const hash = typeof e.prompt === 'string' ? hashPrompt(e.prompt) : null;
     let request = hash ? store.get("SELECT * FROM requests WHERE run_id = ? AND prompt_hash = ? AND accepted_at IS NULL AND status IN ('intent','delivering','awaiting_ack','uncertain') ORDER BY created_at LIMIT 1", run.id, hash) : null;
     if (!request && hash && session.provider === 'codex') {
@@ -70,26 +97,38 @@ export function acceptEvent(store, run, entry, offset) {
         return text !== null && hashPrompt(text) === candidate.prompt_hash;
       });
     }
-    if (request) store.run('UPDATE requests SET status = ?, accepted_at = ?, native_turn_id = ? WHERE session_id = ? AND request_id = ?', 'running', time, turnId, session.id, request.request_id);
+    // The CLI's own prompt hook proves delivery, so an earlier delivery error no longer applies.
+    if (request) store.run('UPDATE requests SET status = ?, accepted_at = ?, native_turn_id = ?, error = NULL WHERE session_id = ? AND request_id = ?', 'running', time, turnId, session.id, request.request_id);
     store.run('UPDATE sessions SET pending = 1, active_turn = ?, status = ?, error = NULL WHERE id = ?', turnId, 'running', session.id);
-  } else if (['PermissionRequest', 'Notification'].includes(event)) {
-    const relevant = event === 'PermissionRequest' || ['permission_prompt', 'elicitation_dialog', 'auth_success'].includes(e.notification_type);
-    if (relevant && e.notification_type !== 'auth_success') store.run('UPDATE sessions SET status = ?, error = ? WHERE id = ?', 'attention', event === 'PermissionRequest' ? 'PERMISSION_REQUIRED' : 'CLI_ATTENTION_REQUIRED', session.id);
-  } else if (event === 'PostToolUse') {
+  } else if (event === 'Notification') {
+    // Claude notifies only when its own dialog is actually waiting for the human, not when a hook or auto mode answered.
+    const code = e.notification_type === 'permission_prompt' ? 'PERMISSION_REQUIRED' : ['elicitation_dialog', 'elicitation_url_dialog'].includes(e.notification_type) ? 'CLI_ATTENTION_REQUIRED' : null;
+    if (code) { adoptUnknownTurn(store, run, session, turnId, time); store.run('UPDATE sessions SET status = ?, error = ? WHERE id = ?', 'attention', code, session.id); }
+  } else if (event === 'PermissionRequest') {
+    // Approval routing started; a reviewer or another hook may answer it. Service.refresh raises attention only if the
+    // CLI then stays silent (Codex), and Claude reports a waiting dialog through its permission_prompt Notification.
+  } else if (['PostToolUse', 'PostToolUseFailure', 'PermissionDenied'].includes(event)) {
+    adoptUnknownTurn(store, run, session, turnId, time);
     if (turnId && turnId === session.active_turn && !run.attention) {
       store.run("UPDATE requests SET status = 'running', completed_at = NULL WHERE run_id = ? AND native_turn_id = ? AND status = 'completed'", run.id, turnId);
       store.run('UPDATE sessions SET pending = 1, status = ?, error = NULL WHERE id = ?', 'running', session.id);
     }
   } else if (['Stop', 'StopFailure', 'Interrupt'].includes(event)) {
     if (!turnId || (session.active_turn && turnId !== session.active_turn)) { incident(store, run, 'HOOK_TURN_ID_MISMATCH'); return; }
+    if (!session.active_turn) { closeOrphans(store, run, session, turnId, time); store.run('UPDATE sessions SET active_turn = ? WHERE id = ?', turnId, session.id); }
     const request = store.get('SELECT * FROM requests WHERE run_id = ? AND native_turn_id = ? ORDER BY created_at DESC LIMIT 1', run.id, turnId);
     const status = event === 'Stop' ? 'completed' : event === 'StopFailure' ? 'failed' : 'interrupted';
     const response = event === 'Stop' && typeof e.last_assistant_message === 'string' ? e.last_assistant_message : null;
-    const background = event === 'Stop' && (e.background_tasks?.length > 0 || e.session_crons?.length > 0);
+    // Running background tasks keep the turn open; scheduled crons are future turns of their own.
+    const background = event === 'Stop' && e.background_tasks?.length > 0;
+    const failure = typeof e.error === 'string' ? e.error : e.error?.type;
+    // The CLI is back at its prompt after an interrupt or a transient API error; the request keeps the outcome.
+    const idle = event === 'Stop' || event === 'Interrupt' || TRANSIENT_FAILURES.has(failure);
     if (request) store.run('UPDATE requests SET status = ?, response = ?, error = ?, completed_at = ? WHERE session_id = ? AND request_id = ?', background ? 'running' : status, response, event === 'StopFailure' ? JSON.stringify(e.error || 'StopFailure') : null, background ? null : time, session.id, request.request_id);
-    store.run('UPDATE sessions SET pending = ?, status = ?, error = ?, last_response = COALESCE(?,last_response), last_response_at = CASE WHEN ? IS NULL THEN last_response_at ELSE ? END WHERE id = ?', background ? 1 : 0, background ? 'running' : event === 'Stop' ? 'ready' : 'attention', event === 'Stop' ? null : event.toUpperCase(), response, response, time, session.id);
+    store.run('UPDATE sessions SET pending = ?, status = ?, error = ?, last_response = COALESCE(?,last_response), last_response_at = CASE WHEN ? IS NULL THEN last_response_at ELSE ? END WHERE id = ?', background ? 1 : 0, background ? 'running' : idle ? 'ready' : 'attention', idle ? null : event.toUpperCase(), response, response, time, session.id);
   } else if (event === 'SessionStart') {
-    if (!session.pending) store.run('UPDATE sessions SET status = ?, error = NULL WHERE id = ?', 'ready', session.id);
+    // A compaction inside a turn Harbor lost track of does not prove the CLI is idle.
+    if (!session.pending && !unknownTurn(store, run, session)) store.run('UPDATE sessions SET status = ?, error = NULL WHERE id = ?', 'ready', session.id);
   } else if (event === 'SessionEnd') {
     store.run("UPDATE requests SET status = 'interrupted', completed_at = ?, error = 'CLI_EXITED' WHERE run_id = ? AND status NOT IN ('completed','failed','interrupted')", time, run.id);
     store.run('UPDATE sessions SET pending = 0 WHERE id = ?', session.id);

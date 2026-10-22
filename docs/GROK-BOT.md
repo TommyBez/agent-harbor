@@ -140,6 +140,7 @@ An older controller is rejected with `DAEMON_UPGRADE_REQUIRED` before a client s
 | `REQUEST_UNRESOLVED` | A previous delivery in this process still has no confirmed receipt | Inspect that receipt and terminal; a new task is blocked to prevent ambiguous attribution |
 | `TRUST_REQUIRED`, `HOOK_TRUST_REQUIRED` | The CLI waits for folder trust or Codex hook review | Ask the user to click Trust in Harbor; `wait --through-attention` on the same request ID |
 | `TRUST_DECLINED` | The human declined; no conversation was created | Report it; start again only if the user asks |
+| `TURN_SUPERSEDED` (request) | The human interrupted and typed their own prompt | Report it; do not resend unless asked |
 | `CLI_NOT_READY`, attention state, `HOOKS_NOT_READY` | Unrecognized dialog, hooks, permission or other observed readiness problem | Direct the user to the existing terminal |
 | `REQUEST_ID_CONFLICT`, `SESSION_ID_CONFLICT` | A retained identity was reused for different input | Correct bookkeeping; do not create duplicates to hide the error |
 | `SESSION_ID_UNVERIFIED`, `WORKTREE_MISSING` | Exact recovery cannot safely proceed | Preserve the session and request human repair |

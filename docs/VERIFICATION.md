@@ -186,6 +186,29 @@ Live check with **Claude Code 2.1.302**, a controller started with that minimal 
 
 The only remaining startup message was a prompt-type SessionStart hook from the user's own Claude configuration, which Claude rejects on its own. Automated checks: **58/58 backend tests**.
 
+## False attention while working: 2026-10-21
+
+A bot-owned Claude session showed **Needs attention · CLI events incomplete** while it kept working. Claude's Bash tool had run `cd` into a project subfolder, and Harbor treated the changed hook `cwd` as an identity failure: a sticky `HOOK_PROJECT_MISMATCH` that also blocked bot sends and kept `wait` on `attention`.
+
+Investigation:
+- A research and sweep workflow of 41 agents checked Claude's and Codex's hook `cwd` semantics against their documentation and the real journal.
+- It swept every path that raises attention, with two skeptics per finding. Of 18 findings, 12 were confirmed.
+- After the fix, a 52-agent adversarial review confirmed 14 further defects in the first draft, all corrected. Two more rounds (14 and 16 agents) concentrated on recovering sessions stuck under older releases. They showed that replaying their journals could reuse event cursor positions and misorder turns, so recovery now clears the marker without replaying and reports `TURN_STATE_UNKNOWN` unless the CLI is provably idle. The corrections from the first review:
+  - the startup recovery's scope and replay;
+  - `rate_limit` and `invalid_request` wrongly counted as transient;
+  - a regression for a Codex worktree launched from a repository subfolder;
+  - an over-broad suppression of uncertain deliveries;
+  - several tests that did not exercise the new paths.
+
+Automated checks: **76/76 backend tests**, including end-to-end fake-CLI runs for:
+- a subdirectory `cd`;
+- a permission held open 1.5 s and then answered by a hook;
+- a cron-only Stop;
+- an `overloaded` StopFailure;
+- a turn ended by Esc and superseded by a typed prompt.
+
+Not verified live: Claude's real `permission_prompt` timing, an Esc interrupt on the real CLI, Codex auto-review.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.

@@ -408,12 +408,15 @@ export class Service {
       const payloadHash = imagePayloadHash(text, inputImages);
       const requestId = args.requestId || randomUUID();
       if (this.duplicate(s, requestId, payloadHash)) return this.response(s.id, requestId, { duplicate: true });
-      this.canSend(s);
+      // --steer delivers into the turn that is running, as typing in the CLI's own terminal does.
+      const steer = !!args.steer;
+      if (steer && inputImages.length) fail('INVALID_IMAGES', 'Images cannot be sent into a running turn. Send them as a new task.');
+      if (steer) this.canSteer(s); else this.canSend(s);
       const run = this.store.runRecord(s.run_id);
       const target = this.terminal(run) || fail('SESSION_STOPPED', 'Start the CLI before sending.');
       const images = stageImages(this.config, inputImages);
       const prompt = imagePrompt(s.provider, text, images);
-      this.store.transaction(() => { this.newRequest(s, run, requestId, prompt, actor, images.length ? 'terminal-images' : 'terminal-paste', payloadHash, images); this.store.run("UPDATE sessions SET pending = 1, status = 'running', updated_at = ? WHERE id = ?", now(), s.id); this.store.audit('send_intent', s.id, { requestId, runId: run.id }); });
+      this.store.transaction(() => { this.newRequest(s, run, requestId, prompt, actor, steer ? 'terminal-steer' : images.length ? 'terminal-images' : 'terminal-paste', payloadHash, images); this.store.run("UPDATE sessions SET pending = 1, status = 'running', updated_at = ? WHERE id = ?", now(), s.id); this.store.audit('send_intent', s.id, { requestId, runId: run.id }); });
       try {
         this.store.run("UPDATE requests SET status = 'delivering' WHERE session_id = ? AND request_id = ?", s.id, requestId);
         const checkControl = () => {
@@ -432,6 +435,7 @@ export class Service {
       this.refresh(); return this.response(s.id, requestId);
     }
     if (action === 'stop') return this.stop(s, actor);
+    if (action === 'interrupt') return this.interrupt(s, actor);
     fail('UNKNOWN_COMMAND', 'Unknown command.');
   }
   title(value) { if (typeof value !== 'string' || !value.trim() || value.length > 160 || /[\x00-\x1f]/.test(value)) fail('INVALID_TITLE', 'Use a title between 1 and 160 characters.'); return value.trim(); }
@@ -468,6 +472,51 @@ export class Service {
     });
     if (hasTask) return this.start(this.store.session(id), args, owner, inputImages);
     return this.response(id);
+  }
+  // Typing into a running turn is safe only while the CLI is working and no dialog is waiting: typed text or Esc would
+  // otherwise answer a permission, trust or elicitation prompt that belongs to the human.
+  workingTurn(s, verb) {
+    const current = this.describe(s.id);
+    if (!current.alive) fail('SESSION_STOPPED', 'Start the CLI first.');
+    if (s.closing) fail('SESSION_CLOSING', 'Wait for the CLI to exit.');
+    if (!s.pending) fail('NO_ACTIVE_TURN', `No turn is running, so there is nothing to ${verb}.`);
+    const run = this.store.runRecord(s.run_id);
+    if (run?.attention) fail('CLI_NOT_READY', 'Hook journal integrity requires attention.');
+    if (!current.hooksReady || !current.nativeSessionId) fail('CLI_NOT_READY', 'The CLI has not confirmed Harbor\'s observation yet.');
+    const dialog = s.status === 'attention' || this.store.get('SELECT event_name FROM events WHERE run_id = ? ORDER BY seq DESC LIMIT 1', run.id)?.event_name === 'PermissionRequest';
+    if (dialog) fail('CLI_WAITING_FOR_HUMAN', `The CLI is waiting for the human${s.error ? ` (${s.error})` : ''}; ${verb === 'interrupt' ? 'Esc' : 'typing'} would answer that dialog. Let the human answer it first.`);
+    return run;
+  }
+  canSteer(s) {
+    this.workingTurn(s, 'steer');
+    if (this.store.get("SELECT request_id FROM requests WHERE run_id = ? AND status IN ('intent','delivering','awaiting_ack','uncertain') LIMIT 1", s.run_id)) fail('REQUEST_UNRESOLVED', 'A previous delivery has no confirmed receipt. Inspect that request and the existing terminal before sending another message.');
+  }
+  // Esc ends the running turn, as in the CLI's own terminal. Codex confirms with its Interrupt hook; Claude fires no hook,
+  // so its own "Interrupted" line on screen is the confirmation. Without either, nothing is marked.
+  async interrupt(s, actor) {
+    const run = this.workingTurn(s, 'interrupt');
+    const target = this.terminal(run) || fail('SESSION_STOPPED', 'Start the CLI first.');
+    const marks = () => { try { return (this.tmux.screen(target).match(/⎿\s+Interrupted\b/g) || []).length; } catch { return 0; } };
+    const before = s.provider === 'claude' ? marks() : 0;
+    this.store.audit('interrupt_intent', s.id, { runId: run.id, actor });
+    this.tmux.key(target, 'Escape');
+    const deadline = Date.now() + 6000;
+    do {
+      await delay(200); this.refresh();
+      const current = this.store.session(s.id);
+      if (current.run_id !== run.id) fail('RUN_CHANGED', 'A different process now owns this session.');
+      if (!current.pending) { this.store.audit('interrupted', s.id, { runId: run.id, actor, by: 'hook' }); return this.response(s.id); }
+      if (s.provider === 'claude' && marks() > before) {
+        const time = now();
+        this.store.transaction(() => {
+          this.store.run("UPDATE requests SET status = 'interrupted', error = 'INTERRUPTED', completed_at = ? WHERE run_id = ? AND status = 'running'", time, run.id);
+          this.store.run("UPDATE sessions SET pending = 0, status = 'ready', error = NULL, updated_at = ? WHERE id = ? AND run_id = ?", time, s.id, run.id);
+          this.store.audit('interrupted', s.id, { runId: run.id, actor, by: 'screen' });
+        });
+        return this.response(s.id);
+      }
+    } while (Date.now() < deadline);
+    fail('INTERRUPT_UNCONFIRMED', 'Esc was sent, but the CLI did not confirm the interrupt. Check the terminal; Harbor changed nothing.');
   }
   canSend(s) {
     const current = this.describe(s.id);

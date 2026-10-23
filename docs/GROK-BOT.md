@@ -136,7 +136,8 @@ An older controller is rejected with `DAEMON_UPGRADE_REQUIRED` before a client s
 | `failed` or `interrupted` | The turn did not complete normally | Report the cause and preserve context before deciding another task |
 | `uncertain`, `DELIVERY_UNCERTAIN`, `RPC_TIMEOUT`, disconnection | Delivery may have occurred | Retrieve the same receipt; do not blindly replay |
 | `CONTROL_DENIED` or `CONTROL_CHANGED` | Human ownership or a changed control epoch | Stop writing and let the human resolve ownership/draft |
-| `TURN_PENDING`, `SESSION_CLOSING` | Current interaction has not reached a ready boundary | Wait or inspect the same operation |
+| `TURN_PENDING`, `SESSION_CLOSING` | Current interaction has not reached a ready boundary | Wait or inspect the same operation; in a bot-owned session, `send --steer` corrects and `interrupt` stops the running turn |
+| `NO_ACTIVE_TURN`, `CLI_WAITING_FOR_HUMAN`, `INTERRUPT_UNCONFIRMED` | Steer or interrupt refused: nothing running, a dialog for the human is open, or the CLI did not confirm Esc | Use a plain send; tell the user about the dialog; inspect the terminal |
 | `REQUEST_UNRESOLVED` | A previous delivery in this process still has no confirmed receipt | Inspect that receipt and terminal; a new task is blocked to prevent ambiguous attribution |
 | `TRUST_REQUIRED`, `HOOK_TRUST_REQUIRED` | The CLI waits for folder trust or Codex hook review | Ask the user to click Trust in Harbor; `wait --through-attention` on the same request ID |
 | `TRUST_DECLINED` | The human declined; no conversation was created | Report it; start again only if the user asks |

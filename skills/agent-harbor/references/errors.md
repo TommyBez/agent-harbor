@@ -20,7 +20,11 @@ Every command prints one JSON object. Failures are `{"ok": false, "error": {"cod
 | `REQUEST_UNRESOLVED` | An earlier delivery in this process still has no receipt | Inspect that receipt; new tasks stay blocked to avoid mixing answers |
 | `CONTROL_DENIED` | The other owner controls the session (or `--actor` was omitted) | Stop writing; never switch control yourself |
 | `CONTROL_CHANGED` | Control changed while a task was being prepared; nothing was submitted | Stop; the human resolves the leftover draft |
-| `TURN_PENDING` | A task is still running, or the human's turn is unfinished | `wait` for it, then retry |
+| `TURN_PENDING` | A task is still running, or the human's turn is unfinished | `wait` for it; to correct or stop it in your own session, use `send --steer` or `interrupt` |
+| `NO_ACTIVE_TURN` | `send --steer` or `interrupt` while nothing is running | Use a plain `send` |
+| `CLI_WAITING_FOR_HUMAN` | A dialog is open; typing or Esc would answer it | Tell the user what the CLI is asking; never answer it |
+| `INTERRUPT_UNCONFIRMED` | Esc was sent but the CLI did not confirm the interrupt; nothing was changed | Read `capture`, tell the user, do not resend the task |
+| `INTERRUPTED` (in `request.error`, status `interrupted`) | You (or the owner) interrupted that request | Expected after `interrupt`; send the next task with a new request ID |
 | `SESSION_CLOSING` | The CLI is exiting | Wait, then `resume` if needed |
 | `SESSION_STOPPED` | The CLI is not running | `resume --actor grok` with a new request ID |
 | `SESSION_ARCHIVED` | The session is archived | Tell the user; run `restore` only if they ask |

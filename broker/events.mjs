@@ -41,6 +41,13 @@ function closeOrphans(store, run, session, turnId, time) {
   if (session.provider !== 'claude') return;
   store.run("UPDATE requests SET status = 'interrupted', error = CASE WHEN error = 'RESULT_NOT_OBSERVED' THEN error ELSE 'TURN_SUPERSEDED' END, completed_at = ? WHERE run_id = ? AND status = 'running' AND native_turn_id IS NOT NULL AND native_turn_id != ? AND native_turn_id NOT IN (SELECT turn_id FROM events WHERE run_id = ? AND turn_id IS NOT NULL AND event_name IN ('Stop','StopFailure'))", time, run.id, turnId, run.id);
 }
+// Claude went idle without the continuation turn that steered messages were waiting for: its last reply answered them.
+function settleSteers(store, run, session, time) {
+  const open = store.all("SELECT r.request_id FROM requests r WHERE r.run_id = ? AND r.transport = 'terminal-steer' AND r.status = 'running' AND EXISTS (SELECT 1 FROM events e WHERE e.run_id = r.run_id AND e.turn_id = r.native_turn_id AND e.event_name IN ('Stop','StopFailure'))", run.id);
+  if (!open.length) return;
+  for (const steer of open) store.run("UPDATE requests SET status = 'completed', response = ?, error = NULL, completed_at = ? WHERE session_id = ? AND request_id = ?", session.last_response, time, session.id, steer.request_id);
+  store.run("UPDATE sessions SET pending = 0, status = 'ready', error = NULL WHERE id = ?", session.id);
+}
 // A legacy recovery left this run's turn unknown (active_turn NULL) and the CLI has not named it yet. The marker is the
 // recovery's own audit row, which no display state can overwrite.
 function unknownTurn(store, run, session) {
@@ -84,6 +91,14 @@ export function acceptEvent(store, run, entry, offset) {
   store.run('UPDATE runs SET hooks_ready = 1 WHERE id = ?', run.id);
   if (session.run_id !== run.id) return; // Late output remains historical, never changes a new process.
   const event = e.hook_event_name;
+  // Claude answers a message typed while it was writing (no tool boundary left) in a turn of its own, with a new prompt
+  // ID and no UserPromptSubmit. Once the active turn has stopped, a new prompt ID is that continuation, not a mismatch.
+  if (session.provider === 'claude' && turnId && session.active_turn && turnId !== session.active_turn && event !== 'UserPromptSubmit'
+    && store.get("SELECT 1 FROM events WHERE run_id = ? AND turn_id = ? AND event_name IN ('Stop','StopFailure') LIMIT 1", run.id, session.active_turn)) {
+    store.run("UPDATE requests SET native_turn_id = ? WHERE run_id = ? AND native_turn_id = ? AND transport = 'terminal-steer' AND status = 'running'", turnId, run.id, session.active_turn);
+    store.run("UPDATE sessions SET active_turn = ?, pending = 1, status = 'running', error = NULL WHERE id = ?", turnId, session.id);
+    session.active_turn = turnId; session.pending = 1;
+  }
   if (event === 'UserPromptSubmit') {
     if (!turnId) { incident(store, run, 'HOOK_TURN_ID_MISSING'); return; }
     closeOrphans(store, run, session, turnId, time);
@@ -101,6 +116,8 @@ export function acceptEvent(store, run, entry, offset) {
     if (request) store.run('UPDATE requests SET status = ?, accepted_at = ?, native_turn_id = ?, error = NULL WHERE session_id = ? AND request_id = ?', 'running', time, turnId, session.id, request.request_id);
     store.run('UPDATE sessions SET pending = 1, active_turn = ?, status = ?, error = NULL WHERE id = ?', turnId, 'running', session.id);
   } else if (event === 'Notification') {
+    // Idle at its prompt: a message still waiting for a continuation turn was answered by the last reply after all.
+    if (e.notification_type === 'idle_prompt' && session.provider === 'claude') settleSteers(store, run, session, time);
     // Claude notifies only when its own dialog is actually waiting for the human, not when a hook or auto mode answered.
     const code = e.notification_type === 'permission_prompt' ? 'PERMISSION_REQUIRED' : ['elicitation_dialog', 'elicitation_url_dialog'].includes(e.notification_type) ? 'CLI_ATTENTION_REQUIRED' : null;
     if (code) { adoptUnknownTurn(store, run, session, turnId, time); store.run('UPDATE sessions SET status = ?, error = ? WHERE id = ?', 'attention', code, session.id); }
@@ -116,7 +133,15 @@ export function acceptEvent(store, run, entry, offset) {
   } else if (['Stop', 'StopFailure', 'Interrupt'].includes(event)) {
     if (!turnId || (session.active_turn && turnId !== session.active_turn)) { incident(store, run, 'HOOK_TURN_ID_MISMATCH'); return; }
     if (!session.active_turn) { closeOrphans(store, run, session, turnId, time); store.run('UPDATE sessions SET active_turn = ? WHERE id = ?', turnId, session.id); }
-    const request = store.get('SELECT * FROM requests WHERE run_id = ? AND native_turn_id = ? ORDER BY created_at DESC LIMIT 1', run.id, turnId);
+    // The turn's own request, plus messages steered into it. A Claude message typed after the turn's last tool result is
+    // answered in a continuation turn instead, so it keeps running until that turn stops.
+    // Only messages that arrived during this turn after its last tool result wait: a continuation turn answers those that
+    // arrived before it began.
+    const marks = store.get("SELECT MIN(time) AS start, MAX(CASE WHEN event_name IN ('PostToolUse','PostToolUseFailure') THEN time END) AS tool FROM events WHERE run_id = ? AND turn_id = ?", run.id, turnId);
+    const since = [marks?.start, marks?.tool].filter(Boolean).sort().at(-1) || '';
+    const steers = store.all("SELECT request_id, accepted_at FROM requests WHERE run_id = ? AND native_turn_id = ? AND transport = 'terminal-steer' AND status = 'running'", run.id, turnId);
+    const waiting = session.provider === 'claude' && event === 'Stop' ? steers.filter(steer => steer.accepted_at > since) : [];
+    const request = store.get("SELECT * FROM requests WHERE run_id = ? AND native_turn_id = ? AND transport != 'terminal-steer' ORDER BY created_at DESC LIMIT 1", run.id, turnId);
     const status = event === 'Stop' ? 'completed' : event === 'StopFailure' ? 'failed' : 'interrupted';
     const response = event === 'Stop' && typeof e.last_assistant_message === 'string' ? e.last_assistant_message : null;
     // Running background tasks keep the turn open; scheduled crons are future turns of their own.
@@ -124,8 +149,14 @@ export function acceptEvent(store, run, entry, offset) {
     const failure = typeof e.error === 'string' ? e.error : e.error?.type;
     // The CLI is back at its prompt after an interrupt or a transient API error; the request keeps the outcome.
     const idle = event === 'Stop' || event === 'Interrupt' || TRANSIENT_FAILURES.has(failure);
-    if (request) store.run('UPDATE requests SET status = ?, response = ?, error = ?, completed_at = ? WHERE session_id = ? AND request_id = ?', background ? 'running' : status, response, event === 'StopFailure' ? JSON.stringify(e.error || 'StopFailure') : null, background ? null : time, session.id, request.request_id);
-    store.run('UPDATE sessions SET pending = ?, status = ?, error = ?, last_response = COALESCE(?,last_response), last_response_at = CASE WHEN ? IS NULL THEN last_response_at ELSE ? END WHERE id = ?', background ? 1 : 0, background ? 'running' : idle ? 'ready' : 'attention', idle ? null : event.toUpperCase(), response, response, time, session.id);
+    for (const target of [request, ...steers.filter(steer => !waiting.includes(steer))].filter(Boolean))
+      store.run('UPDATE requests SET status = ?, response = ?, error = ?, completed_at = ? WHERE session_id = ? AND request_id = ?', background ? 'running' : status, response, event === 'StopFailure' ? JSON.stringify(e.error || 'StopFailure') : null, background ? null : time, session.id, target.request_id);
+    if (waiting.length) {
+      // The continuation turn for those messages comes next: the CLI is still busy.
+      store.run('UPDATE sessions SET pending = 1, status = ?, error = NULL, last_response = COALESCE(?,last_response), last_response_at = CASE WHEN ? IS NULL THEN last_response_at ELSE ? END WHERE id = ?', 'running', response, response, time, session.id);
+    } else {
+      store.run('UPDATE sessions SET pending = ?, status = ?, error = ?, last_response = COALESCE(?,last_response), last_response_at = CASE WHEN ? IS NULL THEN last_response_at ELSE ? END WHERE id = ?', background ? 1 : 0, background ? 'running' : idle ? 'ready' : 'attention', idle ? null : event.toUpperCase(), response, response, time, session.id);
+    }
   } else if (event === 'SessionStart') {
     // A compaction inside a turn Harbor lost track of does not prove the CLI is idle.
     if (!session.pending && !unknownTurn(store, run, session)) store.run('UPDATE sessions SET status = ?, error = NULL WHERE id = ?', 'ready', session.id);

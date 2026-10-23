@@ -235,6 +235,20 @@ A second run on the same isolated home drove the real UI through Native SDK auto
 
 Not verified: a physical Cmd+Shift+Return keystroke (automation dispatches the registered shortcut event after AppKit's key matching), and real Claude Code or Codex runs with these model, effort and worktree values. The fake provider ignores them.
 
+## Steering and interrupting a running turn: 2026-10-23 live pass
+
+Observed first on **Claude Code 2.1.302** and **Codex 0.162.1**, then verified through `send --steer` and `interrupt`, on a temporary Git fixture in a pre-authorized folder:
+
+| Case | Observed CLI behaviour | Harbor result |
+|---|---|---|
+| Codex, message while writing | `UserPromptSubmit` with the running turn ID; one Stop includes the message | Both requests completed with the final answer |
+| Claude, message during a tool call | Same turn ID; injected at the next tool result; one Stop | Both requests completed with the final answer |
+| Claude, message while writing text | Same turn ID on submit; the turn stops, then a continuation turn with a new ID and no prompt hook answers it | Original request kept its own answer; the steer completed with the continuation's answer; no incident (before: a sticky `HOOK_TURN_ID_MISMATCH`, also for a human typing mid-turn) |
+| Codex, Esc | `Interrupt` hook | Request `interrupted`, session `ready`, next task answered |
+| Claude, Esc | No hook; "⎿ Interrupted · What should Claude do instead?" on screen | Request `interrupted`/`INTERRUPTED`, session `ready`, next task answered |
+
+Automated: **93/93 backend tests**, including fake-CLI emulation of each case plus refusals for dialogs, idle CLIs, other owners and unconfirmed interrupts.
+
 ## Explicitly unverified
 
 - Full machine reboot, power loss and every crash timing boundary.

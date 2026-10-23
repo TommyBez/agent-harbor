@@ -11,7 +11,7 @@ Harbor knows two owners: `human` and `grok`. Any automated agent, whatever its n
 
 ## Rules that are never optional
 
-1. **Always pass `--actor grok`** on `start`, `resume`, `send` and `stop`. The actor defaults to `human`: omitting it impersonates the user. `create` takes `--owner grok` instead and needs no `--actor`.
+1. **Always pass `--actor grok`** on `start`, `resume`, `send`, `interrupt` and `stop`. The actor defaults to `human`: omitting it impersonates the user. `create` takes `--owner grok` instead and needs no `--actor`.
 2. **Never take control from the human.** Do not run `control <id> grok` or act with `--actor human` unless the user explicitly tells you to in this conversation. When a session belongs to the human, only observe.
 3. **One session ID per conversation, one request ID per task.** Generate a UUID for `--id` before `create` and a fresh `--request-id` before every task: any short string unique within that session, such as `checkout-review-002` or another UUID. Write both down in your own notes before running the command. Reuse a request ID only to retry the *identical* task.
 4. **Never replay an uncertain task under a new request ID.** After a timeout, disconnect or `uncertain` status, read the same receipt with `result`. If it stays uncertain, stop and ask the human to inspect the terminal.
@@ -102,6 +102,34 @@ When the previous task completed and the session is ready, send the next one wit
 Then `wait` on that new request ID. Retrying `send` with the same request ID and identical text returns the existing receipt with `duplicate: true` and does not deliver the task twice. Reusing a request ID with different text fails with `REQUEST_ID_CONFLICT`: fix your bookkeeping instead of retrying.
 
 `send` refuses with `TURN_PENDING` while a task is still running, `SESSION_STOPPED` if the CLI is closed, and `CONTROL_DENIED` if the human has control.
+
+### Correct or stop a task that is running
+
+In your own session you can act on a running task the way someone at the terminal would.
+
+**Steer it.** `send --steer` delivers a message into the turn that is running: a correction, extra context, or "also do X". The CLI takes it into account without starting over.
+
+```sh
+"$HARBOR_NODE" "$HARBOR_CLI" send <session-id> --actor grok --steer --request-id checkout-review-001-steer-1 \
+  --text "Skip the tests folder; focus on src/checkout."
+```
+
+Give it its own request ID and `wait` on it. It completes with the answer that reflects the message. For Codex that is the turn's final answer. For Claude it is that answer too, or, if Claude was already writing its reply, the short follow-up turn it starts for your message. The original request completes with its own answer. Images cannot be steered.
+
+**Interrupt it.** `interrupt` presses Esc in the CLI, which stops the running turn and keeps the conversation:
+
+```sh
+"$HARBOR_NODE" "$HARBOR_CLI" interrupt <session-id> --actor grok
+```
+
+On success the session is `ready` and the running request is `interrupted`. Send the next task with a new request ID. `INTERRUPT_UNCONFIRMED` means the CLI did not confirm the interrupt and nothing was changed: check `capture` and tell the user.
+
+Both refuse with:
+- `NO_ACTIVE_TURN` when nothing is running; use a plain `send`.
+- `CLI_WAITING_FOR_HUMAN` while the CLI shows a permission, trust or other dialog, because your text or Esc would answer that dialog. That decision is the human's.
+- `CONTROL_DENIED` in a session the human controls.
+
+Never steer or interrupt to get around a dialog, and never interrupt a task the user did not ask you to stop or replace.
 
 ## 5. Stop and resume the same conversation
 

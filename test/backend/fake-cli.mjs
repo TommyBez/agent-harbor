@@ -22,8 +22,31 @@ function emit(event, data = {}) {
     event: { hook_event_name: event, session_id: nativeId, cwd: process.cwd(), ...(activeTurn ? { [provider === 'codex' ? 'turn_id' : 'prompt_id']: activeTurn } : {}), ...data } }) + '\n');
 }
 function finish(response, extra = {}) { process.stdout.write('\r\n' + response + '\r\n> '); emit('Stop', { last_assistant_message: response, ...extra }); }
+// Long turns that accept input while working, as observed on Claude Code 2.1.302 and Codex 0.162.1. A message typed
+// during a turn fires UserPromptSubmit with the running turn's ID. Codex steers it into that turn. Claude does too
+// if a tool result is still ahead; otherwise it answers in a continuation turn with a new prompt ID and no prompt hook.
+// Esc interrupts: Codex fires Interrupt, Claude fires nothing and prints its Interrupted line.
+let busy = null;
+function longTurn(withTool, deaf = false) {
+  busy = { steers: [], injected: [], timers: [], toolDone: !withTool, deaf };
+  const later = (fn, ms) => busy.timers.push(setTimeout(fn, ms));
+  if (withTool) later(() => { emit('PostToolUse', { tool_name: 'Bash' }); busy.injected.push(...busy.steers.splice(0)); busy.toolDone = true; }, 1200);
+  later(() => {
+    const turn = busy; busy = null;
+    const injected = [...turn.injected, ...(provider === 'codex' ? turn.steers.splice(0) : [])];
+    finish('long done' + injected.map(text => ' +' + text).join(''));
+    if (provider === 'claude' && turn.steers.length) setTimeout(() => { activeTurn = randomUUID(); finish('continued: ' + turn.steers.join(' | ')); }, 150);
+  }, deaf ? 9000 : 2500);
+}
+function interrupt() {
+  if (!busy || busy.deaf) return;
+  busy.timers.forEach(clearTimeout); busy = null;
+  if (provider === 'codex') { emit('Interrupt'); process.stdout.write('\r\n■ Conversation interrupted\r\n> '); }
+  else process.stdout.write('\r\n  ⎿  Interrupted · What should Claude do instead?\r\n> ');
+}
 function prompt(text) {
   if (text === '/exit') { emit('SessionEnd'); setTimeout(() => process.exit(0), 30); return; }
+  if (busy) { emit('UserPromptSubmit', { prompt: text }); busy.steers.push(text); return; }
   activeTurn = randomUUID();
   emit('UserPromptSubmit', { prompt: text });
   // A dialog the human must answer: Claude also sends its permission_prompt Notification once the dialog waits.
@@ -36,6 +59,7 @@ function prompt(text) {
   if (text === 'CRON') { finish('scheduled', { session_crons: [{ id: 'every-hour', recurring: true }] }); return; }
   // A turn the human interrupts with Esc: Claude fires no further hook for it.
   if (text === 'NEVER_STOPS') { setTimeout(() => emit('PostToolUse', { tool_name: 'Read' }), 50); return; }
+  if (text === 'LONG' || text === 'LONG_TOOL' || text === 'LONG_DEAF') { longTurn(text === 'LONG_TOOL', text === 'LONG_DEAF'); return; }
   if (text === 'AFTER_STOP') { finish('intermediate'); setTimeout(() => { emit('PostToolUse', { tool_name: 'test' }); finish('final'); }, 250); return; }
   if (text === 'BACKGROUND') { finish('background', { background_tasks: ['task'] }); return; }
   const marker = /MARKER:(\S+)/.exec(text)?.[1];
@@ -99,6 +123,7 @@ process.stdin.on('data', chunk => {
     dialogKey(input); return;
   }
   let input = chunk.toString('utf8').replaceAll('\x1b[200~', '').replaceAll('\x1b[201~', '');
+  if (input === '\x1b') { interrupt(); return; }
   for (const character of input) {
     if (character === '\r') { const text = buffer; buffer = ''; prompt(text); }
     else if (character === '\x03') { emit(provider === 'codex' ? 'Interrupt' : 'StopFailure'); buffer = ''; }
